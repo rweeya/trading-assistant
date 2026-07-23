@@ -146,7 +146,6 @@ const App = () => {
 
   useEffect(() => { localStorage.setItem('trades', JSON.stringify(trades)); if (sessionId) localStorage.setItem('sessionId', sessionId); }, [trades, sessionId]);
 
-  // Обновление текущих цен для открытых сделок
   useEffect(() => {
     const updatePrices = async () => {
       try {
@@ -238,18 +237,22 @@ const App = () => {
   };
 
   const closeTrade = (tradeId: string) => {
+    setTrades(prev => prev.map(t => {
+      if (t.id !== tradeId) return t;
+      const currentPrice = currentPrices.get(t.symbol) || t.entryPrice;
+      const profit = t.action === 'LONG' 
+        ? (currentPrice - t.entryPrice) / t.entryPrice * 100 
+        : (t.entryPrice - currentPrice) / t.entryPrice * 100;
+      return { ...t, exitPrice: currentPrice, profit: Math.round(profit * 100) / 100 };
+    }));
     const trade = trades.find(t => t.id === tradeId);
-    if (!trade) return;
-    const currentPrice = currentPrices.get(trade.symbol) || trade.entryPrice;
-    const profit = trade.action === 'LONG' 
-      ? (currentPrice - trade.entryPrice) / trade.entryPrice * 100 
-      : (trade.entryPrice - currentPrice) / trade.entryPrice * 100;
-    const roundedProfit = Math.round(profit * 100) / 100;
-    
-    setTrades(prev => prev.map(t => 
-      t.id === tradeId ? { ...t, exitPrice: currentPrice, profit: roundedProfit } : t
-    ));
-    showToast(`${trade.symbol}: ${roundedProfit >= 0 ? '🟢' : '🔴'} ${roundedProfit}%`);
+    if (trade) {
+      const currentPrice = currentPrices.get(trade.symbol) || trade.entryPrice;
+      const profit = trade.action === 'LONG' 
+        ? (currentPrice - trade.entryPrice) / trade.entryPrice * 100 
+        : (trade.entryPrice - currentPrice) / trade.entryPrice * 100;
+      showToast(`${trade.symbol}: ${profit >= 0 ? '🟢' : '🔴'} ${Math.round(profit * 100) / 100}%`);
+    }
   };
 
   const deleteTrade = (tradeId: string) => {
@@ -257,8 +260,8 @@ const App = () => {
     showToast('🗑 Сделка удалена');
   };
 
-  const getCurrentPnL = (trade: Trade) => {
-    if (trade.exitPrice) return trade.profit;
+  const getCurrentPnL = (trade: Trade): number => {
+    if (trade.exitPrice && trade.profit !== null) return trade.profit;
     const cp = currentPrices.get(trade.symbol) || trade.entryPrice;
     const profit = trade.action === 'LONG' 
       ? (cp - trade.entryPrice) / trade.entryPrice * 100 

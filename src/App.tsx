@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 
 const DEEPSEEK_API_KEY = 'sk-0ea0af4af3dd4a849db43f56eb186b46';
 
+// Топ-100 самых ликвидных активов (только с хорошими свечами)
 const TOP_PAIRS = [
   'BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'XRPUSDT', 'DOGEUSDT', 'ADAUSDT',
   'AVAXUSDT', 'DOTUSDT', 'MATICUSDT', 'LINKUSDT', 'LTCUSDT', 'UNIUSDT', 'ATOMUSDT',
@@ -14,18 +15,13 @@ const TOP_PAIRS = [
   'BEAMUSDT', 'BLURUSDT', 'ORDIUSDT', 'PENDLEUSDT', 'ENSUSDT', 'LDOUSDT',
   'TONUSDT', 'NOTUSDT', 'MEWUSDT', 'POPCATUSDT', 'RAYUSDT', 'JTOUSDT',
   'TRXUSDT', 'XLMUSDT', 'XTZUSDT', 'CAKEUSDT', '1INCHUSDT', 'SNXUSDT', 'CRVUSDT',
-  'ZROUSDT', 'ZKUSDT', 'ALTUSDT', 'PORTALUSDT', 'AIUSDT', 'BOMEUSDT',
+  'ZROUSDT', 'ZKUSDT', 'ALTUSDT', 'PORTALUSDT', 'BOMEUSDT',
   'TURBOUSDT', 'MEMEUSDT', 'BANANAUSDT', 'RAREUSDT', 'BBUSDT', 'IOUSDT',
   'PIXELUSDT', 'SAGAUSDT', 'DYMUSDT', 'OMNIUSDT', 'REZUSDT', 'ETHFIUSDT',
   'STRKUSDT', 'GMXUSDT', 'LRCUSDT', 'SUPERUSDT', 'MINAUSDT', 'YGGUSDT',
-  'CKBUSDT', 'SUSHIUSDT', 'THETAUSDT', 'APEUSDT', 'BALUSDT', 'ENJUSDT',
-  'HOTUSDT', 'JASMYUSDT', 'KDAUSDT', 'MAGICUSDT', 'OCEANUSDT', 'QNTUSDT',
-  'RVNUSDT', 'SKLUSDT', 'STORJUSDT', 'UMAUSDT', 'WOOUSDT', 'ZILUSDT',
-  'ZRXUSDT', 'ANKRUSDT', 'ASTRUSDT', 'BANDUSDT', 'CELRUSDT', 'DENTUSDT',
-  'DYDXUSDT', 'GLMRUSDT', 'ICXUSDT', 'IOSTUSDT', 'IOTXUSDT', 'JOEUSDT'
+  'CKBUSDT', 'SUSHIUSDT', 'THETAUSDT', 'APEUSDT', 'BALUSDT', 'ENJUSDT'
 ];
 
-// Индикаторы
 const calcRSI = (p: number[], per = 14): number => {
   if (p.length < per + 1) return 50;
   let g = 0, l = 0;
@@ -70,51 +66,26 @@ const calcADX = (p: number[], per = 14): number => {
   return Math.round(Math.abs(smooth(pDM)-smooth(mDM))/(smooth(pDM)+smooth(mDM))*100);
 };
 
-const getDeepSeekAI = async (sym: string, rsi: number, stoch: number, adx: number, macd: number, action: string, price: number): Promise<string> => {
-  try {
-    const res = await fetch('https://api.deepseek.com/v1/chat/completions', {
-      method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${DEEPSEEK_API_KEY}` },
-      body: JSON.stringify({ model: 'deepseek-chat', messages: [{ role: 'user', content: `Анализ ${sym}: RSI=${rsi}, Stoch=${stoch}, ADX=${adx}, MACD=${macd}, цена=$${price}. Сигнал: ${action}. Объясни на русском почему.` }], max_tokens: 80, temperature: 0.3 })
-    });
-    const d = await res.json();
-    return d.choices?.[0]?.message?.content || `${action} сигнал. RSI=${rsi}, Stoch=${stoch}, ADX=${adx}`;
-  } catch { return `${action} сигнал. RSI=${rsi}, Stoch=${stoch}, ADX=${adx}`; }
-};
-
-// КОМБО ДЛЯ 80% ВИНРЕЙТА: только экстремальные точки + сильный тренд + подтверждение объёмом
 const getComboSignal = (klines: number[]): { action: 'LONG' | 'SHORT' | 'SKIP'; probability: number; reasons: string[] } => {
   const price = klines[klines.length - 1];
   const rsi = calcRSI(klines), stoch = calcStoch(klines), macd = calcMACD(klines), adx = calcADX(klines);
-  const ema20 = calcEMA(klines, 20), ema50 = calcEMA(klines, 50), ema200 = calcEMA(klines, 200);
+  const ema20 = calcEMA(klines, 20), ema50 = calcEMA(klines, 50);
   const reasons: string[] = [];
   let longScore = 0, shortScore = 0;
 
-  // RSI — только экстремумы (0-30 баллов)
-  if (rsi < 25) { longScore += 30; reasons.push(`RSI=${rsi} (экстрем. перепродан)`); }
-  else if (rsi < 35) { longScore += 15; reasons.push(`RSI=${rsi}`); }
-  else if (rsi > 75) { shortScore += 30; reasons.push(`RSI=${rsi} (экстрем. перекуплен)`); }
-  else if (rsi > 65) { shortScore += 15; reasons.push(`RSI=${rsi}`); }
+  if (rsi < 35) { longScore += rsi < 25 ? 25 : 12; reasons.push(`RSI=${rsi}`); }
+  else if (rsi > 65) { shortScore += rsi > 75 ? 25 : 12; reasons.push(`RSI=${rsi}`); }
+  if (stoch.k < 25) { longScore += stoch.k < 15 ? 25 : 12; reasons.push(`Stoch=${stoch.k}`); }
+  else if (stoch.k > 75) { shortScore += stoch.k > 85 ? 25 : 12; reasons.push(`Stoch=${stoch.k}`); }
+  if (macd.histogram > 0) { longScore += 18; reasons.push('MACD↑'); }
+  else if (macd.histogram < 0) { shortScore += 18; reasons.push('MACD↓'); }
+  if (adx > 25) { longScore += 12; shortScore += 12; reasons.push(`ADX=${adx}`); }
+  else if (adx > 18) { longScore += 5; shortScore += 5; reasons.push(`ADX=${adx}`); }
+  if (price > ema20) { longScore += 8; } else { shortScore += 8; }
+  if (price > ema50) { longScore += 5; } else { shortScore += 5; }
 
-  // Stoch — двойной экстремум (0-30 баллов)
-  if (stoch.k < 15) { longScore += stoch.k < 8 ? 30 : 20; reasons.push(`Stoch=${stoch.k}`); }
-  else if (stoch.k > 85) { shortScore += stoch.k > 92 ? 30 : 20; reasons.push(`Stoch=${stoch.k}`); }
-
-  // MACD — подтверждение (0-20 баллов)
-  if (macd.histogram > 0 && macd.macd > macd.signal) { longScore += 20; reasons.push('MACD↑'); }
-  else if (macd.histogram < 0 && macd.macd < macd.signal) { shortScore += 20; reasons.push('MACD↓'); }
-
-  // ADX — только сильный тренд (0-15 баллов)
-  if (adx > 35) { longScore += 15; shortScore += 15; reasons.push(`ADX=${adx}`); }
-  else if (adx > 25) { longScore += 8; shortScore += 8; reasons.push(`ADX=${adx}`); }
-  else return { action: 'SKIP', probability: 0, reasons: ['Слабый тренд'] };
-
-  // EMA — полное подтверждение тренда (0-15 баллов)
-  if (price > ema20 && price > ema50 && price > ema200) { longScore += 15; reasons.push('Тренд ↑'); }
-  else if (price < ema20 && price < ema50 && price < ema200) { shortScore += 15; reasons.push('Тренд ↓'); }
-
-  // Только сигналы с вероятностью 80%+
-  if (longScore >= 70) return { action: 'LONG', probability: Math.min(99, longScore), reasons };
-  if (shortScore >= 70) return { action: 'SHORT', probability: Math.min(99, shortScore), reasons };
+  if (longScore >= 55) return { action: 'LONG', probability: Math.min(90, longScore), reasons };
+  if (shortScore >= 55) return { action: 'SHORT', probability: Math.min(90, shortScore), reasons };
   return { action: 'SKIP', probability: 0, reasons };
 };
 
@@ -161,10 +132,9 @@ const App = () => {
     const k = await fetchKlines(sym); if (k.length < 50) return null;
     const price = k[k.length - 1], rsi = calcRSI(k), stoch = calcStoch(k), macd = calcMACD(k), adx = calcADX(k);
     const sig = getComboSignal(k);
-    const tp = sig.action === 'LONG' ? price * 1.02 : price * 0.98;
-    const sl = sig.action === 'LONG' ? price * 0.993 : price * 1.007;
-    let ai = sig.action === 'SKIP' ? `Нет сигнала. ${sig.reasons.join('. ')}.` : `${sig.action} (${sig.probability}%). ${sig.reasons.join('. ')}. TP:$${tp.toFixed(4)} SL:$${sl.toFixed(4)}`;
-    if (sig.action !== 'SKIP') ai = `🤖 DeepSeek: ${await getDeepSeekAI(sym, rsi, stoch.k, adx, macd.histogram, sig.action, price)}`;
+    const tp = sig.action === 'LONG' ? price * 1.015 : price * 0.985;
+    const sl = sig.action === 'LONG' ? price * 0.995 : price * 1.005;
+    const ai = sig.action === 'SKIP' ? `Нет сигнала. ${sig.reasons.join('. ')}.` : `${sig.action} (${sig.probability}%). ${sig.reasons.join('. ')}. TP:$${tp.toFixed(4)} SL:$${sl.toFixed(4)}`;
     return { action: sig.action, probability: sig.probability, rsi, stoch: stoch.k, adx, macd: macd.histogram, tp, sl, entry: price, aiText: ai };
   };
 
@@ -182,12 +152,15 @@ const App = () => {
   const showToast = (m: string) => { setToast(m); setTimeout(() => setToast(''), 3000); };
   useEffect(() => { if (mode === 'auto') { autoScan(); const i = setInterval(autoScan, 120000); return () => clearInterval(i); } }, [mode]);
 
-  const startSession = () => { setSessionId(Date.now().toString()); localStorage.setItem('sessionId', Date.now().toString()); showToast('🚀 Сессия!'); };
+  const startSession = () => { const id = Date.now().toString(); setSessionId(id); localStorage.setItem('sessionId', id); showToast('🚀 Сессия!'); };
   const endSession = () => { setSessionId(null); localStorage.removeItem('sessionId'); showToast('🏁 Завершено'); };
   const openTrade = (a: 'LONG' | 'SHORT', s: string, p: number) => { if (!sessionId) { showToast('⚠️ Начни сессию!'); return; } setTrades(prev => [{ id: Date.now().toString(), symbol: s, action: a, entryPrice: p, exitPrice: null, profit: null, time: new Date().toLocaleString(), sessionId }, ...prev]); showToast(`✅ ${a} ${s}`); window.open(`https://testnet.bybit.com/trade/spot/${s.replace('USDT', '')}/USDT`, '_blank'); };
   const closeTrade = (id: string) => { setTrades(prev => prev.map(t => { if (t.id !== id) return t; const cp = currentPrices.get(t.symbol) || t.entryPrice; const p = t.action === 'LONG' ? (cp - t.entryPrice) / t.entryPrice * 100 : (t.entryPrice - cp) / t.entryPrice * 100; return { ...t, exitPrice: cp, profit: Math.round(p * 100) / 100 }; })); };
   const deleteTrade = (id: string) => { setTrades(prev => prev.filter(t => t.id !== id)); };
   const getPnL = (t: Trade): number => { if (t.exitPrice && t.profit !== null) return t.profit; const cp = currentPrices.get(t.symbol) || t.entryPrice; return Math.round((t.action === 'LONG' ? (cp - t.entryPrice) / t.entryPrice * 100 : (t.entryPrice - cp) / t.entryPrice * 100) * 100) / 100; };
+
+  // Сброс сессии
+  const resetSession = () => { setTrades(prev => prev.filter(t => t.sessionId !== sessionId)); setSessionId(null); localStorage.removeItem('sessionId'); showToast('🔄 Сброс'); };
 
   return (
     <div className="min-h-screen bg-black text-white">
@@ -197,7 +170,12 @@ const App = () => {
       <header className="relative z-10 border-b border-purple-500/20 bg-black/90 backdrop-blur p-4">
         <div className="max-w-6xl mx-auto flex justify-between items-center flex-wrap gap-4">
           <div className="flex items-center gap-4"><h1 className="text-xl font-bold bg-gradient-to-r from-purple-400 to-cyan-400 bg-clip-text text-transparent">🤖 AI TRADING ASSISTANT</h1><div className="flex gap-1 bg-black/40 rounded-lg p-1"><button onClick={() => setMode('manual')} className={`px-3 py-1.5 rounded text-xs font-bold ${mode === 'manual' ? 'bg-purple-600 text-white' : 'text-gray-400'}`}>🔍</button><button onClick={() => setMode('auto')} className={`px-3 py-1.5 rounded text-xs font-bold ${mode === 'auto' ? 'bg-purple-600 text-white' : 'text-gray-400'}`}>🤖</button></div></div>
-          <div className="flex gap-4 text-sm"><div className="text-right"><div className="text-gray-500">WR</div><div className="font-bold text-green-400">{sessionWinRate}%</div></div><div className="text-right"><div className="text-gray-500">P&L</div><div className={`font-bold ${sessionProfit >= 0 ? 'text-green-400' : 'text-red-400'}`}>{sessionProfit >= 0 ? '+' : ''}{sessionProfit}%</div></div></div>
+          <div className="flex gap-4 text-sm items-center">
+            <div className="text-right"><div className="text-gray-500">Прибыль сессия</div><div className={`font-bold text-lg ${sessionProfit >= 0 ? 'text-green-400' : 'text-red-400'}`}>{sessionProfit >= 0 ? '+' : ''}{sessionProfit}%</div></div>
+            <div className="text-right"><div className="text-gray-500">WR сессия</div><div className="font-bold text-green-400">{sessionWinRate}%</div></div>
+            <div className="text-right"><div className="text-gray-500">Сделок</div><div className="font-bold text-white">{sessionTrades.length}</div></div>
+            <button onClick={resetSession} className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded text-xs">🔄 Сброс</button>
+          </div>
         </div>
       </header>
 
@@ -213,9 +191,9 @@ const App = () => {
             <div className="flex gap-3 mb-4"><div className="relative flex-1"><input value={searchSymbol} onChange={e => setSearchSymbol(e.target.value)} placeholder="Поиск пары..." className="w-full bg-black/60 border border-purple-500/30 rounded-lg px-4 py-3 text-white text-lg" />{searchSymbol && <div className="absolute top-full left-0 right-0 bg-black/90 border border-purple-500/30 rounded-lg mt-1 max-h-60 overflow-y-auto z-20">{filteredPairs.map(p => <div key={p} onClick={() => { setSymbol(p); setSearchSymbol(p); }} className={`px-4 py-2 cursor-pointer hover:bg-purple-500/20 ${symbol === p ? 'bg-purple-500/30' : ''}`}>{p}</div>)}</div>}</div><button onClick={analyze} disabled={loading} className={`px-8 py-3 rounded-xl font-bold text-lg ${loading ? 'bg-gray-700 animate-pulse' : 'bg-gradient-to-r from-purple-600 to-cyan-600'}`}>{loading ? '⏳' : '🔍'}</button></div>
             {analysis && (
               <div className={`p-6 rounded-xl border-2 ${analysis.action === 'LONG' ? 'bg-green-500/10 border-green-500' : analysis.action === 'SHORT' ? 'bg-red-500/10 border-red-500' : 'bg-gray-500/10 border-gray-500'}`}>
-                <div className="flex justify-between items-center mb-4"><div><span className="text-3xl font-bold">{analysis.action}</span><span className="ml-3 text-lg text-gray-400">{symbol}</span></div><div className={`text-3xl font-bold ${analysis.probability >= 70 ? 'text-green-400' : 'text-yellow-400'}`}>{analysis.probability}%</div></div>
-                <div className="grid grid-cols-3 gap-3 mb-4 text-sm"><div className="bg-black/40 rounded-lg p-3 text-center"><div className="text-gray-500">Вход</div><div className="text-white font-bold">${formatPrice(analysis.entry)}</div></div><div className="bg-black/40 rounded-lg p-3 text-center"><div className="text-gray-500">TP +2%</div><div className="text-green-400 font-bold">${formatPrice(analysis.tp)}</div></div><div className="bg-black/40 rounded-lg p-3 text-center"><div className="text-gray-500">SL -0.7%</div><div className="text-red-400 font-bold">${formatPrice(analysis.sl)}</div></div></div>
-                <div className="bg-purple-500/10 border border-purple-500/20 rounded-lg p-4 mb-4"><div className="text-xs text-purple-400 mb-1">🤖 DeepSeek AI</div><div className="text-sm text-gray-300">{analysis.aiText}</div></div>
+                <div className="flex justify-between items-center mb-4"><div><span className="text-3xl font-bold">{analysis.action}</span><span className="ml-3 text-lg text-gray-400">{symbol}</span></div><div className={`text-3xl font-bold ${analysis.probability >= 60 ? 'text-green-400' : 'text-yellow-400'}`}>{analysis.probability}%</div></div>
+                <div className="grid grid-cols-3 gap-3 mb-4 text-sm"><div className="bg-black/40 rounded-lg p-3 text-center"><div className="text-gray-500">Вход</div><div className="text-white font-bold">${formatPrice(analysis.entry)}</div></div><div className="bg-black/40 rounded-lg p-3 text-center"><div className="text-gray-500">TP +1.5%</div><div className="text-green-400 font-bold">${formatPrice(analysis.tp)}</div></div><div className="bg-black/40 rounded-lg p-3 text-center"><div className="text-gray-500">SL -0.5%</div><div className="text-red-400 font-bold">${formatPrice(analysis.sl)}</div></div></div>
+                <div className="bg-purple-500/10 border border-purple-500/20 rounded-lg p-4 mb-4"><div className="text-xs text-purple-400 mb-1">📊 АНАЛИЗ</div><div className="text-sm text-gray-300">{analysis.aiText}</div></div>
                 <div className="grid grid-cols-4 gap-2 text-xs mb-4"><div className="bg-black/30 rounded p-2 text-center"><div className="text-gray-500">RSI</div><div className={analysis.rsi < 30 ? 'text-green-400' : analysis.rsi > 70 ? 'text-red-400' : 'text-white'}>{analysis.rsi}</div></div><div className="bg-black/30 rounded p-2 text-center"><div className="text-gray-500">STOCH</div><div className={analysis.stoch < 20 ? 'text-green-400' : analysis.stoch > 80 ? 'text-red-400' : 'text-white'}>{analysis.stoch}</div></div><div className="bg-black/30 rounded p-2 text-center"><div className="text-gray-500">ADX</div><div className="text-white">{analysis.adx}</div></div><div className="bg-black/30 rounded p-2 text-center"><div className="text-gray-500">MACD</div><div className={analysis.macd > 0 ? 'text-green-400' : 'text-red-400'}>{analysis.macd.toFixed(4)}</div></div></div>
                 <div className="flex gap-3"><button onClick={() => openTrade('LONG', symbol, analysis.entry)} className={`flex-1 py-3 rounded-xl font-bold text-lg ${analysis.action === 'LONG' ? 'bg-green-600 animate-pulse' : 'bg-gray-700'}`}>🟢 LONG</button><button onClick={() => openTrade('SHORT', symbol, analysis.entry)} className={`flex-1 py-3 rounded-xl font-bold text-lg ${analysis.action === 'SHORT' ? 'bg-red-600 animate-pulse' : 'bg-gray-700'}`}>🔴 SHORT</button><button className="flex-1 py-3 rounded-xl font-bold text-lg bg-gray-700">⚪ SKIP</button></div>
               </div>
@@ -229,9 +207,9 @@ const App = () => {
             <div className="space-y-3">
               {autoSignals.map((s, i) => (
                 <div key={i} className={`rounded-xl border ${s.action === 'LONG' ? 'bg-green-500/5 border-green-500/30' : 'bg-red-500/5 border-red-500/30'}`}>
-                  <div className="p-4"><div className="flex justify-between items-center mb-3"><div><span className="font-bold text-lg">{s.symbol}</span><span className={`ml-2 px-2 py-0.5 rounded text-xs font-bold ${s.action === 'LONG' ? 'bg-green-600' : 'bg-red-600'}`}>{s.action}</span></div><div className="flex items-center gap-3"><div className={`text-lg font-bold ${s.probability >= 70 ? 'text-green-400' : 'text-yellow-400'}`}>{s.probability}%</div><button onClick={() => openTrade(s.action, s.symbol, s.price)} className={`px-4 py-2 rounded-lg text-sm font-bold ${s.action === 'LONG' ? 'bg-green-600' : 'bg-red-600'}`}>{s.action}</button></div></div>
+                  <div className="p-4"><div className="flex justify-between items-center mb-3"><div><span className="font-bold text-lg">{s.symbol}</span><span className={`ml-2 px-2 py-0.5 rounded text-xs font-bold ${s.action === 'LONG' ? 'bg-green-600' : 'bg-red-600'}`}>{s.action}</span></div><div className="flex items-center gap-3"><div className={`text-lg font-bold ${s.probability >= 60 ? 'text-green-400' : 'text-yellow-400'}`}>{s.probability}%</div><button onClick={() => openTrade(s.action, s.symbol, s.price)} className={`px-4 py-2 rounded-lg text-sm font-bold ${s.action === 'LONG' ? 'bg-green-600' : 'bg-red-600'}`}>{s.action}</button></div></div>
                     <div className="grid grid-cols-4 gap-2 mb-3 text-xs"><div className="bg-black/30 rounded p-2 text-center"><div className="text-gray-500">Цена</div><div className="text-white">${formatPrice(s.price)}</div></div><div className="bg-black/30 rounded p-2 text-center"><div className="text-gray-500">TP</div><div className="text-green-400">${formatPrice(s.tp)}</div></div><div className="bg-black/30 rounded p-2 text-center"><div className="text-gray-500">SL</div><div className="text-red-400">${formatPrice(s.sl)}</div></div><div className="bg-black/30 rounded p-2 text-center"><div className="text-gray-500">RSI/ST/ADX</div><div className="text-white text-[10px]">{s.rsi}/{s.stoch}/{s.adx}</div></div></div>
-                    <div className="bg-purple-500/10 border border-purple-500/20 rounded-lg p-3"><div className="text-xs text-purple-400 mb-1">🤖 DeepSeek AI</div><div className="text-xs text-gray-300">{s.aiReason}</div></div>
+                    <div className="bg-purple-500/10 border border-purple-500/20 rounded-lg p-3"><div className="text-xs text-purple-400 mb-1">📊 АНАЛИЗ</div><div className="text-xs text-gray-300">{s.aiReason}</div></div>
                   </div>
                 </div>
               ))}
@@ -247,7 +225,7 @@ const App = () => {
         )}
 
         <div className="bg-black/40 rounded-xl border border-purple-500/20 overflow-hidden">
-          <div className="p-3 bg-purple-950/20 border-b border-purple-500/20 text-sm font-bold text-purple-300">📜 ИСТОРИЯ ({trades.length})</div>
+          <div className="p-3 bg-purple-950/20 border-b border-purple-500/20 text-sm font-bold text-purple-300">📜 ИСТОРИЯ ({trades.length}) | ПРИБЫЛЬ СЕССИИ: <span className={sessionProfit >= 0 ? 'text-green-400' : 'text-red-400'}>{sessionProfit >= 0 ? '+' : ''}{sessionProfit}%</span></div>
           <div className="divide-y divide-gray-800 max-h-60 overflow-y-auto">
             {trades.length === 0 ? <div className="p-6 text-center text-gray-500 text-sm">Нет сделок</div> : trades.map(t => { const pnl = getPnL(t); return (
               <div key={t.id} className="p-3 flex justify-between items-center text-sm"><div><span className={t.action === 'LONG' ? 'text-green-400' : 'text-red-400'}>{t.action}</span><span className="ml-2 text-gray-400">{t.symbol}</span><span className="ml-2 text-gray-600 text-xs">{t.time}</span></div><div className="flex items-center gap-3"><span className={`font-bold ${pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>{pnl >= 0 ? '+' : ''}{pnl}%</span>{!t.exitPrice && <button onClick={() => closeTrade(t.id)} className="px-3 py-1 bg-red-600/50 rounded text-xs">Закрыть</button>}<button onClick={() => deleteTrade(t.id)} className="text-gray-600 hover:text-red-400 text-xs">✕</button></div></div>

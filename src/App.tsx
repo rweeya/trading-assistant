@@ -20,14 +20,9 @@ const TOP_PAIRS = [
   'HOTUSDT', 'JASMYUSDT', 'KDAUSDT', 'MAGICUSDT', 'OCEANUSDT', 'QNTUSDT',
   'RVNUSDT', 'SKLUSDT', 'STORJUSDT', 'UMAUSDT', 'WOOUSDT', 'ZILUSDT',
   'ZRXUSDT', 'ANKRUSDT', 'ASTRUSDT', 'BANDUSDT', 'CELRUSDT', 'DENTUSDT',
-  'DYDXUSDT', 'GLMRUSDT', 'ICXUSDT', 'IOSTUSDT', 'IOTXUSDT', 'JOEUSDT',
-  'KNCUSDT', 'LINAUSDT', 'LPTUSDT', 'MOVRUSDT', 'NKNUSDT', 'OGNUSDT',
-  'OMUSDT', 'ONTUSDT', 'PERPUSDT', 'POWRUSDT', 'RENUSDT', 'ROSEUSDT',
-  'SFPUSDT', 'SPELLUSDT', 'SSVUSDT', 'SXPUSDT', 'TRBUSDT', 'TRUUSDT',
-  'VRAUSDT', 'WAXPUSDT', 'CFXUSDT', 'MASKUSDT', 'CELOUSDT', 'COTIUSDT'
+  'DYDXUSDT', 'GLMRUSDT', 'ICXUSDT', 'IOSTUSDT', 'IOTXUSDT', 'JOEUSDT'
 ];
 
-// Индикаторы для 15m ТФ
 const calcRSI = (p: number[], per = 14): number => {
   if (p.length < per + 1) return 50;
   let g = 0, l = 0;
@@ -52,7 +47,7 @@ const calcMACD = (p: number[]): { macd: number; signal: number; histogram: numbe
   return { macd, signal, histogram: parseFloat((macd - signal).toFixed(4)) };
 };
 
-const calcStoch = (p: number[], per = 14, kPer = 3): { k: number; d: number } => {
+const calcStoch = (p: number[], per = 14): { k: number; d: number } => {
   if (p.length < per) return { k: 50, d: 50 };
   const s = p.slice(-per); const h = Math.max(...s), l = Math.min(...s);
   const k = h === l ? 50 : ((p[p.length - 1] - l) / (h - l)) * 100;
@@ -73,45 +68,23 @@ const calcADX = (p: number[], per = 14): number => {
   return Math.round(Math.abs(pDI - mDI) / (pDI + mDI) * 100);
 };
 
-// Комбо сигнал для 15m ТФ: RSI + Stoch + MACD + ADX + EMA + Объём
 const getComboSignal = (klines: number[]): { action: 'LONG' | 'SHORT' | 'SKIP'; probability: number; reasons: string[] } => {
   const price = klines[klines.length - 1];
-  const rsi = calcRSI(klines);
-  const stoch = calcStoch(klines);
-  const macd = calcMACD(klines);
-  const adx = calcADX(klines);
-  const ema20 = calcEMA(klines, 20);
-  const ema50 = calcEMA(klines, 50);
-  const ema200 = calcEMA(klines, 200);
-
+  const rsi = calcRSI(klines), stoch = calcStoch(klines), macd = calcMACD(klines), adx = calcADX(klines);
+  const ema20 = calcEMA(klines, 20), ema50 = calcEMA(klines, 50), ema200 = calcEMA(klines, 200);
   const reasons: string[] = [];
   let longScore = 0, shortScore = 0;
 
-  // RSI (0-25 баллов)
-  if (rsi < 40) { longScore += rsi < 30 ? 20 : 10; reasons.push(`RSI=${rsi} (перепродан)`); }
-  else if (rsi > 60) { shortScore += rsi > 70 ? 20 : 10; reasons.push(`RSI=${rsi} (перекуплен)`); }
-
-  // Stochastic (0-25 баллов)
-  if (stoch.k < 30) { longScore += stoch.k < 20 ? 20 : 10; reasons.push(`Stoch=${stoch.k} (перепродан)`); }
-  else if (stoch.k > 70) { shortScore += stoch.k > 80 ? 20 : 10; reasons.push(`Stoch=${stoch.k} (перекуплен)`); }
-
-  // MACD (0-20 баллов)
-  if (macd.histogram > 0 && macd.macd > macd.signal) { longScore += 15; reasons.push('MACD бычий'); }
-  else if (macd.histogram < 0 && macd.macd < macd.signal) { shortScore += 15; reasons.push('MACD медвежий'); }
-
-  // ADX (0-15 баллов)
-  if (adx > 20) { longScore += 10; shortScore += 10; reasons.push(`ADX=${adx} (тренд)`); }
-  else reasons.push(`ADX=${adx} (флэт)`);
-
-  // EMA (0-15 баллов)
-  if (price > ema20) { longScore += 10; reasons.push('Цена > EMA20'); }
-  else { shortScore += 10; reasons.push('Цена < EMA20'); }
-  if (price > ema50) { longScore += 5; }
-  else { shortScore += 5; }
-  if (price > ema200) { longScore += 5; }
-  else { shortScore += 5; }
-
-  console.log(`${klines.length} свечей | LONG:${longScore} SHORT:${shortScore} | RSI:${rsi} Stoch:${stoch.k} ADX:${adx}`);
+  if (rsi < 40) { longScore += rsi < 30 ? 20 : 10; reasons.push(`RSI=${rsi}`); }
+  else if (rsi > 60) { shortScore += rsi > 70 ? 20 : 10; reasons.push(`RSI=${rsi}`); }
+  if (stoch.k < 30) { longScore += stoch.k < 20 ? 20 : 10; reasons.push(`Stoch=${stoch.k}`); }
+  else if (stoch.k > 70) { shortScore += stoch.k > 80 ? 20 : 10; reasons.push(`Stoch=${stoch.k}`); }
+  if (macd.histogram > 0) { longScore += 15; reasons.push('MACD↑'); }
+  else if (macd.histogram < 0) { shortScore += 15; reasons.push('MACD↓'); }
+  if (adx > 20) { longScore += 10; shortScore += 10; reasons.push(`ADX=${adx}`); }
+  if (price > ema20) { longScore += 10; } else { shortScore += 10; }
+  if (price > ema50) { longScore += 5; } else { shortScore += 5; }
+  if (price > ema200) { longScore += 5; } else { shortScore += 5; }
 
   if (longScore >= 55) return { action: 'LONG', probability: Math.min(90, longScore), reasons };
   if (shortScore >= 55) return { action: 'SHORT', probability: Math.min(90, shortScore), reasons };
@@ -143,11 +116,15 @@ const App = () => {
   const [pairs, setPairs] = useState<string[]>([]);
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [loading, setLoading] = useState(false);
-  const [trades, setTrades] = useState<Trade[]>(() => JSON.parse(localStorage.getItem('trades') || '[]'));
+  const [trades, setTrades] = useState<Trade[]>(() => {
+    try { return JSON.parse(localStorage.getItem('trades') || '[]'); } catch { return []; }
+  });
   const [sessionId, setSessionId] = useState<string | null>(() => localStorage.getItem('sessionId'));
   const [autoSignals, setAutoSignals] = useState<Signal[]>([]);
   const [autoScanning, setAutoScanning] = useState(false);
   const [lastAutoScan, setLastAutoScan] = useState('');
+  const [showChart, setShowChart] = useState(false);
+  const [toast, setToast] = useState('');
 
   const sessionTrades = trades.filter(t => t.sessionId === sessionId);
   const totalTrades = trades.filter(t => t.exitPrice !== null);
@@ -198,36 +175,48 @@ const App = () => {
         if (r && r.action !== 'SKIP') signals.push({ symbol: batch[idx], action: r.action, probability: r.probability, rsi: r.rsi, stoch: r.stoch, adx: r.adx, macd: r.macd, price: r.entry, tp: r.tp, sl: r.sl, aiReason: r.aiText });
       });
       setAutoSignals([...signals].sort((a, b) => b.probability - a.probability));
-      await new Promise(r => setTimeout(r, 300));
+      await new Promise(r => setTimeout(r, 200));
     }
     setLastAutoScan(new Date().toLocaleTimeString());
     setAutoScanning(false);
+    if (signals.length > 0) showToast(`Найдено ${signals.length} сигналов!`);
   };
+
+  const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(''), 3000); };
 
   useEffect(() => { if (mode === 'auto') { autoScan(); const interval = setInterval(autoScan, 120000); return () => clearInterval(interval); } }, [mode]);
 
-  const startSession = () => { const id = Date.now().toString(); setSessionId(id); localStorage.setItem('sessionId', id); };
-  const endSession = () => { setSessionId(null); localStorage.removeItem('sessionId'); };
+  const startSession = () => { const id = Date.now().toString(); setSessionId(id); localStorage.setItem('sessionId', id); showToast('Сессия началась!'); };
+  const endSession = () => { setSessionId(null); localStorage.removeItem('sessionId'); showToast('Сессия завершена'); };
+  
   const openTrade = (action: 'LONG' | 'SHORT', sym: string, price: number) => {
-    if (!sessionId) return;
+    if (!sessionId) { showToast('Начни сессию!'); return; }
     setTrades(prev => [{ id: Date.now().toString(), symbol: sym, action, entryPrice: price, exitPrice: null, profit: null, time: new Date().toLocaleString(), sessionId }, ...prev]);
-    window.open(`https://www.bybit.com/trade/spot/${sym.replace('USDT', '')}/USDT`, '_blank');
+    showToast(`${action} ${sym} открыт!`);
+    window.open(`https://testnet.bybit.com/trade/spot/${sym.replace('USDT', '')}/USDT`, '_blank');
   };
+
   const closeTrade = (tradeId: string, price: number) => {
     setTrades(prev => prev.map(t => {
       if (t.id !== tradeId) return t;
       const profit = t.action === 'LONG' ? (price - t.entryPrice) / t.entryPrice * 100 : (t.entryPrice - price) / t.entryPrice * 100;
+      showToast(`${t.symbol}: ${profit >= 0 ? '+' : ''}${profit.toFixed(2)}%`);
       return { ...t, exitPrice: price, profit: Math.round(profit * 100) / 100 };
     }));
   };
+
   const deleteTrade = (tradeId: string) => setTrades(prev => prev.filter(t => t.id !== tradeId));
 
   return (
     <div className="min-h-screen bg-black text-white">
+      {/* Toast */}
+      {toast && <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 bg-purple-600 px-6 py-3 rounded-xl font-bold animate-pulse">{toast}</div>}
+
+      {/* Фон */}
       <div className="fixed inset-0 pointer-events-none z-0">
-        {Array.from({ length: 30 }).map((_, i) => (
+        {Array.from({ length: 20 }).map((_, i) => (
           <div key={i} className="absolute w-0.5 h-0.5 bg-purple-400 rounded-full animate-pulse"
-            style={{ left: `${Math.random()*100}%`, top: `${Math.random()*100}%`, animationDuration: `${2+Math.random()*4}s`, opacity: 0.15+Math.random()*0.3 }} />
+            style={{ left: `${Math.random()*100}%`, top: `${Math.random()*100}%`, animationDuration: `${3+Math.random()*4}s`, opacity: 0.1+Math.random()*0.2 }} />
         ))}
       </div>
 
@@ -254,16 +243,17 @@ const App = () => {
           {!sessionId ? (
             <button onClick={startSession} className="px-6 py-2.5 bg-green-600 hover:bg-green-500 rounded-xl font-bold text-sm animate-pulse">▶ Начать сессию</button>
           ) : (
-            <button onClick={endSession} className="px-6 py-2.5 bg-red-600 hover:bg-red-500 rounded-xl font-bold text-sm">⏹ Завершить сессию</button>
+            <button onClick={endSession} className="px-6 py-2.5 bg-red-600 hover:bg-red-500 rounded-xl font-bold text-sm">⏹ Завершить</button>
           )}
-          {!sessionId && <span className="text-sm text-gray-500 self-center">Начни сессию чтобы отслеживать сделки</span>}
+          <a href="https://testnet.bybit.com" target="_blank" className="px-4 py-2.5 bg-blue-600 hover:bg-blue-500 rounded-xl font-bold text-sm">🔗 Bybit Testnet</a>
+          <a href="https://testnet.bybit.com/faucet" target="_blank" className="px-4 py-2.5 bg-yellow-600 hover:bg-yellow-500 rounded-xl font-bold text-sm">💰 Кран (дать USDT)</a>
         </div>
 
         {mode === 'manual' && (
           <div className="bg-black/40 rounded-xl p-6 border border-purple-500/20 mb-6">
             <div className="flex gap-3 mb-4">
               <div className="relative flex-1">
-                <input value={searchSymbol} onChange={e => setSearchSymbol(e.target.value)} placeholder="Поиск пары..." className="w-full bg-black/60 border border-purple-500/30 rounded-lg px-4 py-3 text-white text-lg" />
+                <input value={searchSymbol} onChange={e => setSearchSymbol(e.target.value)} placeholder="Поиск пары (BTC, ETH...)" className="w-full bg-black/60 border border-purple-500/30 rounded-lg px-4 py-3 text-white text-lg" />
                 {searchSymbol && (
                   <div className="absolute top-full left-0 right-0 bg-black/90 border border-purple-500/30 rounded-lg mt-1 max-h-60 overflow-y-auto z-20">
                     {filteredPairs.map(p => (
@@ -275,7 +265,7 @@ const App = () => {
               <button onClick={analyze} disabled={loading} className={`px-8 py-3 rounded-xl font-bold text-lg ${loading ? 'bg-gray-700 animate-pulse' : 'bg-gradient-to-r from-purple-600 to-cyan-600 hover:from-purple-500 hover:to-cyan-500'}`}>{loading ? '⏳' : '🔍 АНАЛИЗ'}</button>
             </div>
             {analysis && (
-              <div className={`p-6 rounded-xl border-2 ${analysis.action === 'LONG' ? 'bg-green-500/10 border-green-500 shadow-[0_0_20px_rgba(34,197,94,0.2)]' : analysis.action === 'SHORT' ? 'bg-red-500/10 border-red-500 shadow-[0_0_20px_rgba(239,68,68,0.2)]' : 'bg-gray-500/10 border-gray-500'}`}>
+              <div className={`p-6 rounded-xl border-2 ${analysis.action === 'LONG' ? 'bg-green-500/10 border-green-500' : analysis.action === 'SHORT' ? 'bg-red-500/10 border-red-500' : 'bg-gray-500/10 border-gray-500'}`}>
                 <div className="flex justify-between items-center mb-4">
                   <div><span className="text-3xl font-bold">{analysis.action}</span><span className="ml-3 text-lg text-gray-400">{symbol}</span></div>
                   <div className={`text-3xl font-bold ${analysis.probability >= 60 ? 'text-green-400' : 'text-yellow-400'}`}>{analysis.probability}%</div>
@@ -286,7 +276,7 @@ const App = () => {
                   <div className="bg-black/40 rounded-lg p-3 text-center"><div className="text-gray-500">SL</div><div className="text-red-400 font-bold">${formatPrice(analysis.sl)}</div></div>
                 </div>
                 <div className="bg-purple-500/10 border border-purple-500/20 rounded-lg p-4 mb-4">
-                  <div className="text-xs text-purple-400 mb-1">🤖 АНАЛИЗ</div>
+                  <div className="text-xs text-purple-400 mb-1">📊 ПОЛНЫЙ АНАЛИЗ</div>
                   <div className="text-sm text-gray-300">{analysis.aiText}</div>
                 </div>
                 <div className="grid grid-cols-4 gap-2 text-xs mb-4">
@@ -296,9 +286,9 @@ const App = () => {
                   <div className="bg-black/30 rounded p-2 text-center"><div className="text-gray-500">MACD</div><div className={analysis.macd > 0 ? 'text-green-400' : 'text-red-400'}>{analysis.macd.toFixed(4)}</div></div>
                 </div>
                 <div className="flex gap-3">
-                  <button onClick={() => openTrade('LONG', symbol, analysis.entry)} disabled={!sessionId} className={`flex-1 py-3 rounded-xl font-bold text-lg ${analysis.action === 'LONG' ? 'bg-green-600 animate-pulse' : 'bg-gray-700'}`}>🟢 LONG</button>
-                  <button onClick={() => openTrade('SHORT', symbol, analysis.entry)} disabled={!sessionId} className={`flex-1 py-3 rounded-xl font-bold text-lg ${analysis.action === 'SHORT' ? 'bg-red-600 animate-pulse' : 'bg-gray-700'}`}>🔴 SHORT</button>
-                  <button disabled={!sessionId} className="flex-1 py-3 rounded-xl font-bold text-lg bg-gray-700">⚪ SKIP</button>
+                  <button onClick={() => openTrade('LONG', symbol, analysis.entry)} className={`flex-1 py-3 rounded-xl font-bold text-lg ${analysis.action === 'LONG' ? 'bg-green-600 animate-pulse' : 'bg-gray-700'}`}>🟢 LONG</button>
+                  <button onClick={() => openTrade('SHORT', symbol, analysis.entry)} className={`flex-1 py-3 rounded-xl font-bold text-lg ${analysis.action === 'SHORT' ? 'bg-red-600 animate-pulse' : 'bg-gray-700'}`}>🔴 SHORT</button>
+                  <button className="flex-1 py-3 rounded-xl font-bold text-lg bg-gray-700">⚪ SKIP</button>
                 </div>
               </div>
             )}
@@ -308,9 +298,10 @@ const App = () => {
         {mode === 'auto' && (
           <div className="bg-black/40 rounded-xl p-6 border border-purple-500/20 mb-6">
             <div className="flex justify-between items-center mb-4">
-              <div><h2 className="text-lg font-bold text-purple-300">🤖 АВТО-ПОИСК ({TOP_PAIRS.length} пар)</h2><p className="text-xs text-gray-500">{lastAutoScan || 'Ожидание...'}</p></div>
+              <div><h2 className="text-lg font-bold text-purple-300">🤖 АВТО-ПОИСК ({TOP_PAIRS.length} пар)</h2><p className="text-xs text-gray-500">{lastAutoScan || 'Нажми обновить'}</p></div>
               <button onClick={autoScan} disabled={autoScanning} className={`px-4 py-2 rounded-lg text-sm font-bold ${autoScanning ? 'bg-gray-700' : 'bg-purple-600'}`}>{autoScanning ? '...' : '🔄 Обновить'}</button>
             </div>
+            {autoSignals.length === 0 && !autoScanning && <div className="text-center py-8 text-gray-500">Нет сигналов. Нажми "Обновить"</div>}
             <div className="space-y-3">
               {autoSignals.map((s, i) => (
                 <div key={i} className={`rounded-xl border ${s.action === 'LONG' ? 'bg-green-500/5 border-green-500/30' : 'bg-red-500/5 border-red-500/30'}`}>
@@ -319,16 +310,16 @@ const App = () => {
                       <div><span className="font-bold text-lg">{s.symbol}</span><span className={`ml-2 px-2 py-0.5 rounded text-xs font-bold ${s.action === 'LONG' ? 'bg-green-600' : 'bg-red-600'}`}>{s.action}</span></div>
                       <div className="flex items-center gap-3">
                         <div className={`text-lg font-bold ${s.probability >= 60 ? 'text-green-400' : 'text-yellow-400'}`}>{s.probability}%</div>
-                        <button onClick={() => openTrade(s.action, s.symbol, s.price)} disabled={!sessionId} className={`px-4 py-2 rounded-lg text-sm font-bold ${s.action === 'LONG' ? 'bg-green-600' : 'bg-red-600'}`}>{s.action}</button>
+                        <button onClick={() => openTrade(s.action, s.symbol, s.price)} className={`px-4 py-2 rounded-lg text-sm font-bold ${s.action === 'LONG' ? 'bg-green-600' : 'bg-red-600'}`}>{s.action}</button>
                       </div>
                     </div>
                     <div className="grid grid-cols-4 gap-2 mb-3 text-xs">
                       <div className="bg-black/30 rounded p-2 text-center"><div className="text-gray-500">Цена</div><div className="text-white">${formatPrice(s.price)}</div></div>
-                      <div className="bg-black/30 rounded p-2 text-center"><div className="text-gray-500">TP</div><div className="text-green-400">${formatPrice(s.tp)}</div></div>
-                      <div className="bg-black/30 rounded p-2 text-center"><div className="text-gray-500">SL</div><div className="text-red-400">${formatPrice(s.sl)}</div></div>
+                      <div className="bg-black/30 rounded p-2 text-center"><div className="text-gray-500">TP +1.5%</div><div className="text-green-400">${formatPrice(s.tp)}</div></div>
+                      <div className="bg-black/30 rounded p-2 text-center"><div className="text-gray-500">SL -0.5%</div><div className="text-red-400">${formatPrice(s.sl)}</div></div>
                       <div className="bg-black/30 rounded p-2 text-center"><div className="text-gray-500">RSI/ST/ADX</div><div className="text-white text-[10px]">{s.rsi}/{s.stoch}/{s.adx}</div></div>
                     </div>
-                    <div className="bg-purple-500/10 border border-purple-500/20 rounded-lg p-3"><div className="text-xs text-purple-400 mb-1">🤖 АНАЛИЗ</div><div className="text-xs text-gray-300">{s.aiReason}</div></div>
+                    <div className="bg-purple-500/10 border border-purple-500/20 rounded-lg p-3"><div className="text-xs text-purple-400 mb-1">📊 АНАЛИЗ</div><div className="text-xs text-gray-300">{s.aiReason}</div></div>
                   </div>
                 </div>
               ))}
@@ -338,8 +329,11 @@ const App = () => {
 
         {analysis && mode === 'manual' && (
           <div className="bg-black/40 rounded-xl border border-purple-500/20 overflow-hidden mb-6">
-            <div className="p-3 bg-purple-950/20 border-b border-purple-500/20 text-sm font-bold text-purple-300">📈 ГРАФИК {symbol}</div>
-            <iframe src={`https://s.tradingview.com/widgetembed/?frame_id=tv_fixed&symbol=BYBIT:${symbol}&interval=15&hidesidetoolbar=1&symboledit=0&saveimage=0&toolbarbg=000&theme=dark&style=1&locale=ru`} width="100%" height="400" frameBorder="0" className="w-full" />
+            <div className="p-3 bg-purple-950/20 border-b border-purple-500/20 flex justify-between items-center">
+              <span className="text-sm font-bold text-purple-300">📈 ГРАФИК {symbol}</span>
+              <button onClick={() => setShowChart(!showChart)} className="text-xs text-gray-400">{showChart ? 'Скрыть' : 'Показать'}</button>
+            </div>
+            {showChart && <iframe src={`https://s.tradingview.com/widgetembed/?frame_id=tv_fixed&symbol=BYBIT:${symbol}&interval=15&hidesidetoolbar=1&symboledit=0&saveimage=0&toolbarbg=000&theme=dark&style=1&locale=ru`} width="100%" height="400" frameBorder="0" className="w-full" />}
           </div>
         )}
 
@@ -348,9 +342,17 @@ const App = () => {
           <div className="divide-y divide-gray-800 max-h-60 overflow-y-auto">
             {trades.length === 0 ? <div className="p-6 text-center text-gray-500 text-sm">Нет сделок</div> : trades.map(t => (
               <div key={t.id} className="p-3 flex justify-between items-center text-sm">
-                <div><span className={t.action === 'LONG' ? 'text-green-400' : 'text-red-400'}>{t.action}</span><span className="ml-2 text-gray-400">{t.symbol}</span><span className="ml-2 text-gray-600 text-xs">{t.time}</span></div>
+                <div>
+                  <span className={t.action === 'LONG' ? 'text-green-400' : 'text-red-400'}>{t.action}</span>
+                  <span className="ml-2 text-gray-400">{t.symbol}</span>
+                  <span className="ml-2 text-gray-600 text-xs">{t.time}</span>
+                </div>
                 <div className="flex items-center gap-3">
-                  {t.exitPrice ? <span className={t.profit! >= 0 ? 'text-green-400' : 'text-red-400'}>{t.profit! >= 0 ? '+' : ''}{t.profit}%</span> : <button onClick={() => closeTrade(t.id, analysis?.entry || 0)} className="px-3 py-1 bg-red-600/50 rounded text-xs">Закрыть</button>}
+                  {t.exitPrice ? (
+                    <span className={t.profit! >= 0 ? 'text-green-400' : 'text-red-400'}>{t.profit! >= 0 ? '+' : ''}{t.profit}%</span>
+                  ) : (
+                    <button onClick={() => closeTrade(t.id, analysis?.entry || 0)} className="px-3 py-1 bg-red-600/50 rounded text-xs">Закрыть</button>
+                  )}
                   <button onClick={() => deleteTrade(t.id)} className="text-gray-600 hover:text-red-400 text-xs">✕</button>
                 </div>
               </div>

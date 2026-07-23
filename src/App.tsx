@@ -1,7 +1,5 @@
 import { useState, useEffect } from 'react';
 
-const AI_TOKEN = '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';
-
 const TOP_PAIRS = [
   'BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'XRPUSDT', 'DOGEUSDT', 'ADAUSDT',
   'AVAXUSDT', 'DOTUSDT', 'MATICUSDT', 'LINKUSDT', 'LTCUSDT', 'UNIUSDT', 'ATOMUSDT',
@@ -26,10 +24,7 @@ const TOP_PAIRS = [
   'KNCUSDT', 'LINAUSDT', 'LPTUSDT', 'MOVRUSDT', 'NKNUSDT', 'OGNUSDT',
   'OMUSDT', 'ONTUSDT', 'PERPUSDT', 'POWRUSDT', 'RENUSDT', 'ROSEUSDT',
   'SFPUSDT', 'SPELLUSDT', 'SSVUSDT', 'SXPUSDT', 'TRBUSDT', 'TRUUSDT',
-  'VRAUSDT', 'WAXPUSDT', 'CFXUSDT', 'MASKUSDT', 'CELOUSDT', 'COTIUSDT',
-  'STEEMUSDT', 'SUNUSDT', 'TLMUSDT', 'TOMIUSDT', 'TWTUSDT', 'UNFIUSDT',
-  'USTCUSDT', 'UTKUSDT', 'VTHOUSDT', 'WAVESUSDT', 'XVGUSDT', 'XVSUSDT',
-  'ZENUSDT', 'ZILUSDT'
+  'VRAUSDT', 'WAXPUSDT', 'CFXUSDT', 'MASKUSDT', 'CELOUSDT', 'COTIUSDT'
 ];
 
 const calcRSI = (p: number[]): number => {
@@ -128,7 +123,8 @@ const App = () => {
   useEffect(() => {
     fetch('https://api.bybit.com/v5/market/tickers?category=spot')
       .then(r => r.json())
-      .then(d => { if (d.result?.list) setPairs(d.result.list.filter((t: any) => t.symbol.endsWith('USDT')).map((t: any) => t.symbol)); });
+      .then(d => { if (d.result?.list) setPairs(d.result.list.filter((t: any) => t.symbol.endsWith('USDT')).map((t: any) => t.symbol)); })
+      .catch(() => {});
   }, []);
 
   const filteredPairs = pairs.filter((p: string) => p.includes(searchSymbol.toUpperCase())).slice(0, 50);
@@ -138,19 +134,8 @@ const App = () => {
       const res = await fetch(`https://api.bybit.com/v5/market/kline?category=spot&symbol=${sym}&interval=1&limit=100`);
       const data = await res.json();
       if (data.retCode === 0 && data.result?.list) return data.result.list.reverse().map((c: any) => parseFloat(c[4]));
-    } catch (e) { console.error(e); }
+    } catch (e) {}
     return [];
-  };
-
-  const getAI = async (sym: string, rsi: number, stoch: number, adx: number, action: string): Promise<string> => {
-    try {
-      const res = await fetch('https://api-inference.huggingface.co/models/google/flan-t5-small', {
-        method: 'POST', headers: { 'Authorization': `Bearer ${AI_TOKEN}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ inputs: `${sym}: RSI=${rsi} Stoch=${stoch} ADX=${adx}. Signal=${action}. Explain in 2 sentences.`, parameters: { max_new_tokens: 50, temperature: 0.3 } })
-      });
-      const d = await res.json();
-      return d?.[0]?.generated_text || `${action} сигнал. RSI=${rsi}, Stoch=${stoch}, ADX=${adx}`;
-    } catch { return `${action} сигнал. RSI=${rsi}, Stoch=${stoch}, ADX=${adx}`; }
   };
 
   const analyzeSymbol = async (sym: string): Promise<Analysis | null> => {
@@ -161,7 +146,13 @@ const App = () => {
     let action: 'LONG' | 'SHORT' | 'SKIP' = 'SKIP', probability = 0, tp = price, sl = price;
     if (rsi < 35 && stoch < 25 && macd > 0 && price > ema20 && adx > 20) { action = 'LONG'; probability = rsi < 25 ? 75 : 60; tp = price * 1.015; sl = price * 0.995; }
     else if (rsi > 65 && stoch > 75 && macd < 0 && price < ema20 && adx > 20) { action = 'SHORT'; probability = rsi > 75 ? 75 : 60; tp = price * 0.985; sl = price * 1.005; }
-    const aiText = await getAI(sym, rsi, stoch, adx, action);
+
+    const rsiText = rsi < 30 ? 'перепродан' : rsi > 70 ? 'перекуплен' : 'нейтрально';
+    const adxText = adx > 30 ? 'очень сильный' : adx > 20 ? 'сильный' : 'слабый';
+    const aiText = action === 'SKIP'
+      ? `Нет сигнала. RSI=${rsi} (${rsiText}), ADX=${adx} (${adxText} тренд). Жди более выгодного входа.`
+      : `${action} сигнал! RSI=${rsi} (${rsiText}), Stochastic=${stoch}, ADX=${adx} (${adxText} тренд). Цель: $${tp.toFixed(4)}, Стоп: $${sl.toFixed(4)}.`;
+
     return { action, probability, rsi, stoch, adx, macd, tp, sl, entry: price, aiText };
   };
 
@@ -177,7 +168,7 @@ const App = () => {
         if (r && r.action !== 'SKIP') signals.push({ symbol: batch[idx], action: r.action, probability: r.probability, rsi: r.rsi, stoch: r.stoch, adx: r.adx, macd: r.macd, price: r.entry, tp: r.tp, sl: r.sl, aiReason: r.aiText });
       });
       setAutoSignals([...signals].sort((a: Signal, b: Signal) => b.probability - a.probability));
-      await new Promise(r => setTimeout(r, 500));
+      await new Promise(r => setTimeout(r, 300));
     }
     setLastAutoScan(new Date().toLocaleTimeString());
     setAutoScanning(false);
@@ -268,7 +259,7 @@ const App = () => {
                   <div className="bg-black/40 rounded-lg p-3 text-center"><div className="text-gray-500">SL</div><div className="text-red-400 font-bold">${formatPrice(analysis.sl)}</div></div>
                 </div>
                 <div className="bg-purple-500/10 border border-purple-500/20 rounded-lg p-4 mb-4">
-                  <div className="text-xs text-purple-400 mb-1">🤖 AI АНАЛИЗ</div>
+                  <div className="text-xs text-purple-400 mb-1">🤖 АНАЛИЗ</div>
                   <div className="text-sm text-gray-300">{analysis.aiText}</div>
                 </div>
                 <div className="grid grid-cols-4 gap-2 text-xs mb-4">
@@ -310,7 +301,7 @@ const App = () => {
                       <div className="bg-black/30 rounded p-2 text-center"><div className="text-gray-500">SL</div><div className="text-red-400">${formatPrice(s.sl)}</div></div>
                       <div className="bg-black/30 rounded p-2 text-center"><div className="text-gray-500">Инд</div><div className="text-white text-[10px]">RSI:{s.rsi} ST:{s.stoch} ADX:{s.adx}</div></div>
                     </div>
-                    <div className="bg-purple-500/10 border border-purple-500/20 rounded-lg p-3"><div className="text-xs text-purple-400 mb-1">🤖 AI</div><div className="text-xs text-gray-300">{s.aiReason}</div></div>
+                    <div className="bg-purple-500/10 border border-purple-500/20 rounded-lg p-3"><div className="text-xs text-purple-400 mb-1">🤖 АНАЛИЗ</div><div className="text-xs text-gray-300">{s.aiReason}</div></div>
                   </div>
                 </div>
               ))}

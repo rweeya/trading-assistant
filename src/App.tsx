@@ -71,7 +71,6 @@ const fetchFinnhubCandles = async (sym: string): Promise<number[]> => {
     const data = await res.json();
     if (data.s === 'ok' && data.c) return data.c;
   } catch {}
-  // Пробуем как акцию
   try {
     const res = await fetch(`https://finnhub.io/api/v1/stock/candle?token=${FINNHUB_KEY}&symbol=${sym}&resolution=1&count=100`);
     const data = await res.json();
@@ -124,7 +123,7 @@ const getComboSignal = (klines: number[]): { action: 'LONG' | 'SHORT' | 'SKIP'; 
   return { action: 'SKIP', probability: 0, reasons: [] };
 };
 
-interface Signal { symbol: string; action: 'LONG' | 'SHORT'; probability: number; rsi: number; stoch: number; adx: number; macd: number; price: number; tp: number; sl: number; predictions: { min: number; price: number; direction: string }[]; expiryTime: string; }
+interface Signal { symbol: string; action: 'LONG' | 'SHORT'; probability: number; rsi: number; stoch: number; adx: number; macd: number; price: number; tp: number; sl: number; aiReason: string; predictions: { min: number; price: number; direction: string }[]; expiryTime: string; }
 interface Analysis { action: 'LONG' | 'SHORT' | 'SKIP'; probability: number; rsi: number; stoch: number; adx: number; macd: number; tp: number; sl: number; entry: number; aiText: string; predictions: { min: number; price: number; direction: string }[]; expiryTime: string; }
 interface Trade { id: string; symbol: string; action: 'LONG' | 'SHORT'; entryPrice: number; exitPrice: number | null; profit: number | null; time: string; sessionId: string; }
 interface POTrade { id: string; symbol: string; action: 'UP' | 'DOWN'; result: 'win' | 'loss' | null; time: string; }
@@ -140,7 +139,6 @@ const App = () => {
   const [autoSignals, setAutoSignals] = useState<Signal[]>([]);
   const [autoScanning, setAutoScanning] = useState(false);
   const [lastAutoScan, setLastAutoScan] = useState('');
-  const [showChart, setShowChart] = useState(false);
   const [toast, setToast] = useState('');
   const [poTrades, setPoTrades] = useState<POTrade[]>(() => { try { return JSON.parse(localStorage.getItem('poTrades') || '[]'); } catch { return []; } });
 
@@ -176,7 +174,7 @@ const App = () => {
     setAutoScanning(true); const sigs: Signal[] = [];
     for (let i = 0; i < TOP_PAIRS.length; i += 3) {
       const b = TOP_PAIRS.slice(i, i + 3); const res = await Promise.all(b.map(s => analyzeSymbol(s)));
-      res.forEach((r, idx) => { if (r && r.action !== 'SKIP') sigs.push({ symbol: b[idx], action: r.action, probability: r.probability, rsi: r.rsi, stoch: r.stoch, adx: r.adx, macd: r.macd, price: r.entry, tp: r.tp, sl: r.sl, predictions: r.predictions, expiryTime: r.expiryTime, aiReason: r.aiText }); });
+      res.forEach((r, idx) => { if (r && r.action !== 'SKIP') sigs.push({ symbol: b[idx], action: r.action, probability: r.probability, rsi: r.rsi, stoch: r.stoch, adx: r.adx, macd: r.macd, price: r.entry, tp: r.tp, sl: r.sl, aiReason: r.aiText, predictions: r.predictions, expiryTime: r.expiryTime }); });
       setAutoSignals([...sigs].sort((a, b) => b.probability - a.probability)); await new Promise(r => setTimeout(r, 500));
     }
     setLastAutoScan(new Date().toLocaleTimeString()); setAutoScanning(false);
@@ -192,9 +190,8 @@ const App = () => {
     setTrades(prev => [{ id: Date.now().toString(), symbol: sym, action, entryPrice: price, exitPrice: null, profit: null, time: new Date().toLocaleTimeString(), sessionId }, ...prev]);
     window.open('https://pocketoption.com', '_blank');
   };
-  const closeTrade = (id: string) => { setTrades(prev => prev.map(t => { if (t.id !== id) return t; const cp = 0; const p = t.action === 'LONG' ? 0 : 0; return { ...t, exitPrice: cp, profit: Math.round(p * 100) / 100 }; })); };
+  const closeTrade = (id: string) => { setTrades(prev => prev.map(t => { if (t.id !== id) return t; return { ...t, exitPrice: 0, profit: 0 }; })); };
   const deleteTrade = (id: string) => { setTrades(prev => prev.filter(t => t.id !== id)); };
-  const getPnL = (t: Trade): number => { if (t.exitPrice && t.profit !== null) return t.profit; return 0; };
   const resetSession = () => { setTrades(prev => prev.filter(t => t.sessionId !== sessionId)); setSessionId(null); localStorage.removeItem('sessionId'); showToast('🔄 Сброс'); };
 
   const addPOTrade = (action: 'UP' | 'DOWN', symbol: string, result: 'win' | 'loss') => {
@@ -258,7 +255,6 @@ const App = () => {
                 <div key={i} className={`rounded-xl border ${s.action === 'LONG' ? 'bg-green-500/5 border-green-500/30' : 'bg-red-500/5 border-red-500/30'}`}>
                   <div className="p-4"><div className="flex justify-between items-center mb-3"><div><span className="font-bold text-lg">{s.symbol}</span><span className={`ml-2 px-2 py-0.5 rounded text-xs font-bold ${s.action === 'LONG' ? 'bg-green-600' : 'bg-red-600'}`}>{s.action === 'LONG' ? '📈 ВВЕРХ' : '📉 ВНИЗ'}</span></div><div className="flex items-center gap-3"><div className={`text-lg font-bold ${s.probability >= 75 ? 'text-green-400' : 'text-yellow-400'}`}>{s.probability}%</div><span className="text-yellow-400 font-bold text-sm">⏱ {s.expiryTime}</span><button onClick={() => openTrade(s.action, s.symbol, s.price)} className={`px-4 py-2 rounded-lg text-sm font-bold ${s.action === 'LONG' ? 'bg-green-600' : 'bg-red-600'}`}>{s.action === 'LONG' ? 'ВВЕРХ' : 'ВНИЗ'}</button></div></div>
                     <div className="grid grid-cols-3 gap-2 mb-3 text-xs">{s.predictions.map(p => <div key={p.min} className={`bg-black/30 rounded p-2 text-center border ${p.direction === 'up' ? 'border-green-500/20' : 'border-red-500/20'}`}><div className="text-gray-500">{p.min}м</div><div className={`font-bold ${p.direction === 'up' ? 'text-green-400' : 'text-red-400'}`}>{p.price.toFixed(5)}</div></div>)}</div>
-                    <div className="bg-purple-500/10 border border-purple-500/20 rounded-lg p-3"><div className="text-xs text-gray-300">{s.aiReason}</div></div>
                   </div>
                 </div>
               ))}

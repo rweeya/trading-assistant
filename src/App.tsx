@@ -2,7 +2,6 @@ import { useState, useEffect } from 'react';
 
 const DEEPSEEK_API_KEY = 'sk-0ea0af4af3dd4a849db43f56eb186b46';
 
-// Топ-100 самых ликвидных активов (только с хорошими свечами)
 const TOP_PAIRS = [
   'BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'XRPUSDT', 'DOGEUSDT', 'ADAUSDT',
   'AVAXUSDT', 'DOTUSDT', 'MATICUSDT', 'LINKUSDT', 'LTCUSDT', 'UNIUSDT', 'ATOMUSDT',
@@ -66,6 +65,17 @@ const calcADX = (p: number[], per = 14): number => {
   return Math.round(Math.abs(smooth(pDM)-smooth(mDM))/(smooth(pDM)+smooth(mDM))*100);
 };
 
+const getDeepSeekAI = async (sym: string, rsi: number, stoch: number, adx: number, macd: number, action: string, price: number): Promise<string> => {
+  try {
+    const res = await fetch('https://api.deepseek.com/v1/chat/completions', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${DEEPSEEK_API_KEY}` },
+      body: JSON.stringify({ model: 'deepseek-chat', messages: [{ role: 'user', content: `Ты трейдер. Анализ ${sym}: RSI=${rsi}, Stoch=${stoch}, ADX=${adx}, MACD=${macd}, цена=$${price}. Сигнал: ${action}. Объясни на русском в 1 предложении: почему этот сигнал?` }], max_tokens: 60, temperature: 0.3 })
+    });
+    const d = await res.json();
+    return d.choices?.[0]?.message?.content || `${action} сигнал. RSI=${rsi}, Stoch=${stoch}, ADX=${adx}`;
+  } catch { return `${action} сигнал. RSI=${rsi}, Stoch=${stoch}, ADX=${adx}`; }
+};
+
 const getComboSignal = (klines: number[]): { action: 'LONG' | 'SHORT' | 'SKIP'; probability: number; reasons: string[] } => {
   const price = klines[klines.length - 1];
   const rsi = calcRSI(klines), stoch = calcStoch(klines), macd = calcMACD(klines), adx = calcADX(klines);
@@ -80,7 +90,7 @@ const getComboSignal = (klines: number[]): { action: 'LONG' | 'SHORT' | 'SKIP'; 
   if (macd.histogram > 0) { longScore += 18; reasons.push('MACD↑'); }
   else if (macd.histogram < 0) { shortScore += 18; reasons.push('MACD↓'); }
   if (adx > 25) { longScore += 12; shortScore += 12; reasons.push(`ADX=${adx}`); }
-  else if (adx > 18) { longScore += 5; shortScore += 5; reasons.push(`ADX=${adx}`); }
+  else if (adx > 18) { longScore += 5; shortScore += 5; }
   if (price > ema20) { longScore += 8; } else { shortScore += 8; }
   if (price > ema50) { longScore += 5; } else { shortScore += 5; }
 
@@ -120,7 +130,20 @@ const App = () => {
 
   useEffect(() => { localStorage.setItem('trades', JSON.stringify(trades)); if (sessionId) localStorage.setItem('sessionId', sessionId); }, [trades, sessionId]);
   useEffect(() => { const f = async () => { try { const r = await fetch('https://api.bybit.com/v5/market/tickers?category=spot'); const d = await r.json(); if (d.result?.list) { const m = new Map<string, number>(); d.result.list.forEach((t: any) => m.set(t.symbol, parseFloat(t.lastPrice))); setCurrentPrices(m); } } catch {} }; f(); const i = setInterval(f, 5000); return () => clearInterval(i); }, []);
-  useEffect(() => { fetch('https://api.bybit.com/v5/market/tickers?category=spot').then(r => r.json()).then(d => { if (d.result?.list) setPairs(d.result.list.filter((t: any) => t.symbol.endsWith('USDT')).map((t: any) => t.symbol)); }).catch(() => {}); }, []);
+  useEffect(() => {
+    fetch('https://api.bybit.com/v5/market/tickers?category=spot')
+      .then(r => r.json())
+      .then(d => {
+        if (d.result?.list) {
+          const filtered = d.result.list
+            .filter((t: any) => t.symbol.endsWith('USDT'))
+            .filter((t: any) => parseFloat(t.volume24h) > 500000)
+            .map((t: any) => t.symbol);
+          setPairs(filtered);
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   const filteredPairs = pairs.filter(p => p.includes(searchSymbol.toUpperCase())).slice(0, 50);
   const fetchKlines = async (sym: string): Promise<number[]> => {
@@ -129,12 +152,23 @@ const App = () => {
   };
 
   const analyzeSymbol = async (sym: string): Promise<Analysis | null> => {
+    try {
+      const tickerRes = await fetch(`https://api.bybit.com/v5/market/tickers?category=spot&symbol=${sym}`);
+      const tickerData = await tickerRes.json();
+      const volume = parseFloat(tickerData?.result?.list?.[0]?.volume24h || '0');
+      if (volume < 500000) return null;
+    } catch {}
+
     const k = await fetchKlines(sym); if (k.length < 50) return null;
     const price = k[k.length - 1], rsi = calcRSI(k), stoch = calcStoch(k), macd = calcMACD(k), adx = calcADX(k);
     const sig = getComboSignal(k);
     const tp = sig.action === 'LONG' ? price * 1.015 : price * 0.985;
     const sl = sig.action === 'LONG' ? price * 0.995 : price * 1.005;
-    const ai = sig.action === 'SKIP' ? `Нет сигнала. ${sig.reasons.join('. ')}.` : `${sig.action} (${sig.probability}%). ${sig.reasons.join('. ')}. TP:$${tp.toFixed(4)} SL:$${sl.toFixed(4)}`;
+    let ai = sig.action === 'SKIP' ? `Нет сигнала. ${sig.reasons.join('. ')}.` : `${sig.action} (${sig.probability}%). ${sig.reasons.join('. ')}. TP:$${tp.toFixed(4)} SL:$${sl.toFixed(4)}`;
+    if (sig.action !== 'SKIP') {
+      const ds = await getDeepSeekAI(sym, rsi, stoch.k, adx, macd.histogram, sig.action, price);
+      ai = `🤖 DeepSeek: ${ds}`;
+    }
     return { action: sig.action, probability: sig.probability, rsi, stoch: stoch.k, adx, macd: macd.histogram, tp, sl, entry: price, aiText: ai };
   };
 
@@ -158,8 +192,6 @@ const App = () => {
   const closeTrade = (id: string) => { setTrades(prev => prev.map(t => { if (t.id !== id) return t; const cp = currentPrices.get(t.symbol) || t.entryPrice; const p = t.action === 'LONG' ? (cp - t.entryPrice) / t.entryPrice * 100 : (t.entryPrice - cp) / t.entryPrice * 100; return { ...t, exitPrice: cp, profit: Math.round(p * 100) / 100 }; })); };
   const deleteTrade = (id: string) => { setTrades(prev => prev.filter(t => t.id !== id)); };
   const getPnL = (t: Trade): number => { if (t.exitPrice && t.profit !== null) return t.profit; const cp = currentPrices.get(t.symbol) || t.entryPrice; return Math.round((t.action === 'LONG' ? (cp - t.entryPrice) / t.entryPrice * 100 : (t.entryPrice - cp) / t.entryPrice * 100) * 100) / 100; };
-
-  // Сброс сессии
   const resetSession = () => { setTrades(prev => prev.filter(t => t.sessionId !== sessionId)); setSessionId(null); localStorage.removeItem('sessionId'); showToast('🔄 Сброс'); };
 
   return (
@@ -193,7 +225,7 @@ const App = () => {
               <div className={`p-6 rounded-xl border-2 ${analysis.action === 'LONG' ? 'bg-green-500/10 border-green-500' : analysis.action === 'SHORT' ? 'bg-red-500/10 border-red-500' : 'bg-gray-500/10 border-gray-500'}`}>
                 <div className="flex justify-between items-center mb-4"><div><span className="text-3xl font-bold">{analysis.action}</span><span className="ml-3 text-lg text-gray-400">{symbol}</span></div><div className={`text-3xl font-bold ${analysis.probability >= 60 ? 'text-green-400' : 'text-yellow-400'}`}>{analysis.probability}%</div></div>
                 <div className="grid grid-cols-3 gap-3 mb-4 text-sm"><div className="bg-black/40 rounded-lg p-3 text-center"><div className="text-gray-500">Вход</div><div className="text-white font-bold">${formatPrice(analysis.entry)}</div></div><div className="bg-black/40 rounded-lg p-3 text-center"><div className="text-gray-500">TP +1.5%</div><div className="text-green-400 font-bold">${formatPrice(analysis.tp)}</div></div><div className="bg-black/40 rounded-lg p-3 text-center"><div className="text-gray-500">SL -0.5%</div><div className="text-red-400 font-bold">${formatPrice(analysis.sl)}</div></div></div>
-                <div className="bg-purple-500/10 border border-purple-500/20 rounded-lg p-4 mb-4"><div className="text-xs text-purple-400 mb-1">📊 АНАЛИЗ</div><div className="text-sm text-gray-300">{analysis.aiText}</div></div>
+                <div className="bg-purple-500/10 border border-purple-500/20 rounded-lg p-4 mb-4"><div className="text-xs text-purple-400 mb-1">🤖 DeepSeek AI</div><div className="text-sm text-gray-300">{analysis.aiText}</div></div>
                 <div className="grid grid-cols-4 gap-2 text-xs mb-4"><div className="bg-black/30 rounded p-2 text-center"><div className="text-gray-500">RSI</div><div className={analysis.rsi < 30 ? 'text-green-400' : analysis.rsi > 70 ? 'text-red-400' : 'text-white'}>{analysis.rsi}</div></div><div className="bg-black/30 rounded p-2 text-center"><div className="text-gray-500">STOCH</div><div className={analysis.stoch < 20 ? 'text-green-400' : analysis.stoch > 80 ? 'text-red-400' : 'text-white'}>{analysis.stoch}</div></div><div className="bg-black/30 rounded p-2 text-center"><div className="text-gray-500">ADX</div><div className="text-white">{analysis.adx}</div></div><div className="bg-black/30 rounded p-2 text-center"><div className="text-gray-500">MACD</div><div className={analysis.macd > 0 ? 'text-green-400' : 'text-red-400'}>{analysis.macd.toFixed(4)}</div></div></div>
                 <div className="flex gap-3"><button onClick={() => openTrade('LONG', symbol, analysis.entry)} className={`flex-1 py-3 rounded-xl font-bold text-lg ${analysis.action === 'LONG' ? 'bg-green-600 animate-pulse' : 'bg-gray-700'}`}>🟢 LONG</button><button onClick={() => openTrade('SHORT', symbol, analysis.entry)} className={`flex-1 py-3 rounded-xl font-bold text-lg ${analysis.action === 'SHORT' ? 'bg-red-600 animate-pulse' : 'bg-gray-700'}`}>🔴 SHORT</button><button className="flex-1 py-3 rounded-xl font-bold text-lg bg-gray-700">⚪ SKIP</button></div>
               </div>
@@ -209,7 +241,7 @@ const App = () => {
                 <div key={i} className={`rounded-xl border ${s.action === 'LONG' ? 'bg-green-500/5 border-green-500/30' : 'bg-red-500/5 border-red-500/30'}`}>
                   <div className="p-4"><div className="flex justify-between items-center mb-3"><div><span className="font-bold text-lg">{s.symbol}</span><span className={`ml-2 px-2 py-0.5 rounded text-xs font-bold ${s.action === 'LONG' ? 'bg-green-600' : 'bg-red-600'}`}>{s.action}</span></div><div className="flex items-center gap-3"><div className={`text-lg font-bold ${s.probability >= 60 ? 'text-green-400' : 'text-yellow-400'}`}>{s.probability}%</div><button onClick={() => openTrade(s.action, s.symbol, s.price)} className={`px-4 py-2 rounded-lg text-sm font-bold ${s.action === 'LONG' ? 'bg-green-600' : 'bg-red-600'}`}>{s.action}</button></div></div>
                     <div className="grid grid-cols-4 gap-2 mb-3 text-xs"><div className="bg-black/30 rounded p-2 text-center"><div className="text-gray-500">Цена</div><div className="text-white">${formatPrice(s.price)}</div></div><div className="bg-black/30 rounded p-2 text-center"><div className="text-gray-500">TP</div><div className="text-green-400">${formatPrice(s.tp)}</div></div><div className="bg-black/30 rounded p-2 text-center"><div className="text-gray-500">SL</div><div className="text-red-400">${formatPrice(s.sl)}</div></div><div className="bg-black/30 rounded p-2 text-center"><div className="text-gray-500">RSI/ST/ADX</div><div className="text-white text-[10px]">{s.rsi}/{s.stoch}/{s.adx}</div></div></div>
-                    <div className="bg-purple-500/10 border border-purple-500/20 rounded-lg p-3"><div className="text-xs text-purple-400 mb-1">📊 АНАЛИЗ</div><div className="text-xs text-gray-300">{s.aiReason}</div></div>
+                    <div className="bg-purple-500/10 border border-purple-500/20 rounded-lg p-3"><div className="text-xs text-purple-400 mb-1">🤖 DeepSeek AI</div><div className="text-xs text-gray-300">{s.aiReason}</div></div>
                   </div>
                 </div>
               ))}
@@ -225,7 +257,7 @@ const App = () => {
         )}
 
         <div className="bg-black/40 rounded-xl border border-purple-500/20 overflow-hidden">
-          <div className="p-3 bg-purple-950/20 border-b border-purple-500/20 text-sm font-bold text-purple-300">📜 ИСТОРИЯ ({trades.length}) | ПРИБЫЛЬ СЕССИИ: <span className={sessionProfit >= 0 ? 'text-green-400' : 'text-red-400'}>{sessionProfit >= 0 ? '+' : ''}{sessionProfit}%</span></div>
+          <div className="p-3 bg-purple-950/20 border-b border-purple-500/20 text-sm font-bold text-purple-300">📜 ИСТОРИЯ ({trades.length}) | ПРИБЫЛЬ: <span className={sessionProfit >= 0 ? 'text-green-400' : 'text-red-400'}>{sessionProfit >= 0 ? '+' : ''}{sessionProfit}%</span></div>
           <div className="divide-y divide-gray-800 max-h-60 overflow-y-auto">
             {trades.length === 0 ? <div className="p-6 text-center text-gray-500 text-sm">Нет сделок</div> : trades.map(t => { const pnl = getPnL(t); return (
               <div key={t.id} className="p-3 flex justify-between items-center text-sm"><div><span className={t.action === 'LONG' ? 'text-green-400' : 'text-red-400'}>{t.action}</span><span className="ml-2 text-gray-400">{t.symbol}</span><span className="ml-2 text-gray-600 text-xs">{t.time}</span></div><div className="flex items-center gap-3"><span className={`font-bold ${pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>{pnl >= 0 ? '+' : ''}{pnl}%</span>{!t.exitPrice && <button onClick={() => closeTrade(t.id)} className="px-3 py-1 bg-red-600/50 rounded text-xs">Закрыть</button>}<button onClick={() => deleteTrade(t.id)} className="text-gray-600 hover:text-red-400 text-xs">✕</button></div></div>

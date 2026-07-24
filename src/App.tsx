@@ -10,11 +10,17 @@ const TOP_PAIRS = [
   'USDMXN', 'AUDJPY', 'AUDCAD', 'CADCHF', 'CHFJPY', 'NZDUSD', 'NZDJPY',
   'GBPAUD', 'GBPCAD', 'GBPCHF', 'EURCHF', 'USDCNH', 'USDRUB', 'USDMYR',
   'USDIDR', 'USDINR', 'USDPHP', 'USDTHB', 'USDSGD', 'USDHKD',
+  'JODCNY', 'MADUSD', 'OMRCNY', 'SARCNY', 'TNDUSD',
+  'USDARS', 'USDBDT', 'USDBRL', 'USDCOP', 'USDPKR',
+  'USDVND', 'YERUSD', 'ZARUSD', 'USDSGD', 'CHFNOK',
+  'USDINR', 'QARCNY', 'USDCLP', 'KESUSD', 'USDPHP',
+  'BHDCNY', 'LBPUSD', 'NGNUSD', 'UAHUSD', 'USDDZD',
+  'USDEGP',
   // Акции
-  'AAPL', 'MSFT', 'TSLA', 'AMZN', 'NFLX', 'META', 'NVDA', 'GOOGL',
-  'JPM', 'V', 'JNJ', 'WMT', 'PG', 'MA', 'UNH', 'HD',
-  'DIS', 'ADBE', 'CRM', 'CSCO', 'INTC', 'AMD', 'BA', 'XOM',
-  'PFE', 'PLTR', 'COIN', 'GME', 'AXP', 'FDX', 'C', 'MARA', 'BABA'
+  'AAPL', 'CSCO', 'INTC', 'MSFT', 'PFE', 'TSLA', 'XOM', 'AMZN', 'NFLX', 'V',
+  'PLTR', 'COIN', 'GME', 'AMD', 'BA', 'AXP', 'VIX', 'FDX', 'C', 'META',
+  'MARA', 'JNJ', 'JPM', 'MCD', 'BABA', 'DIS', 'ADBE', 'CRM', 'NVDA', 'GOOGL',
+  'WMT', 'PG', 'MA', 'UNH', 'HD'
 ];
 
 const calcRSI = (p: number[], per = 14): number => {

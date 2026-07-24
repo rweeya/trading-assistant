@@ -129,8 +129,8 @@ const getComboSignal = (klines: number[], fundingRate: number): { action: 'LONG'
   return { action: 'SKIP', probability: 0, reasons: [] };
 };
 
-interface Signal { symbol: string; action: 'LONG' | 'SHORT'; probability: number; rsi: number; stoch: number; adx: number; price: number; tp: number; sl: number; aiReason: string; predictions: { min: number; price: number; direction: string }[]; expiryTime: string; }
-interface Analysis { action: 'LONG' | 'SHORT' | 'SKIP'; probability: number; rsi: number; stoch: number; adx: number; tp: number; sl: number; entry: number; aiText: string; predictions: { min: number; price: number; direction: string }[]; expiryTime: string; }
+interface Signal { symbol: string; action: 'LONG' | 'SHORT'; probability: number; rsi: number; stoch: number; adx: number; macd: number; price: number; tp: number; sl: number; aiReason: string; predictions: { min: number; price: number; direction: string }[]; expiryTime: string; }
+interface Analysis { action: 'LONG' | 'SHORT' | 'SKIP'; probability: number; rsi: number; stoch: number; adx: number; macd: number; tp: number; sl: number; entry: number; aiText: string; predictions: { min: number; price: number; direction: string }[]; expiryTime: string; }
 interface Trade { id: string; symbol: string; action: 'LONG' | 'SHORT'; entryPrice: number; exitPrice: number | null; profit: number | null; time: string; sessionId: string; }
 interface POTrade { id: string; symbol: string; action: 'UP' | 'DOWN'; result: 'win' | 'loss' | null; time: string; }
 
@@ -188,7 +188,7 @@ const App = () => {
     });
     let ai = sig.action === 'SKIP' ? 'Нет сигнала.' : `${sig.action} (${sig.probability}%).`;
     if (sig.action !== 'SKIP') ai = `🤖 DeepSeek: ${await getDeepSeekAI(sym, rsi, stoch.k, adx, macd, sig.action, price, k, fundingRate)}`;
-    return { action: sig.action, probability: sig.probability, rsi, stoch: stoch.k, adx, tp, sl, entry: price, aiText: ai, predictions, expiryTime };
+    return { action: sig.action, probability: sig.probability, rsi, stoch: stoch.k, adx, macd: macd.histogram, tp, sl, entry: price, aiText: ai, predictions, expiryTime };
   };
 
   const analyze = async () => { setLoading(true); const r = await analyzeSymbol(symbol); if (r) setAnalysis(r); setLoading(false); };
@@ -196,7 +196,7 @@ const App = () => {
     setAutoScanning(true); const sigs: Signal[] = [];
     for (let i = 0; i < TOP_PAIRS.length; i += 5) {
       const b = TOP_PAIRS.slice(i, i + 5); const res = await Promise.all(b.map(s => analyzeSymbol(s)));
-      res.forEach((r, idx) => { if (r && r.action !== 'SKIP') sigs.push({ symbol: b[idx], action: r.action, probability: r.probability, rsi: r.rsi, stoch: r.stoch, adx: r.adx, price: r.entry, tp: r.tp, sl: r.sl, aiReason: r.aiText, predictions: r.predictions, expiryTime: r.expiryTime }); });
+      res.forEach((r, idx) => { if (r && r.action !== 'SKIP') sigs.push({ symbol: b[idx], action: r.action, probability: r.probability, rsi: r.rsi, stoch: r.stoch, adx: r.adx, macd: r.macd, price: r.entry, tp: r.tp, sl: r.sl, aiReason: r.aiText, predictions: r.predictions, expiryTime: r.expiryTime }); });
       setAutoSignals([...sigs].sort((a, b) => b.probability - a.probability)); await new Promise(r => setTimeout(r, 200));
     }
     setLastAutoScan(new Date().toLocaleTimeString()); setAutoScanning(false);
@@ -249,18 +249,9 @@ const App = () => {
             <div className="flex gap-3 mb-4"><div className="relative flex-1"><input value={searchSymbol} onChange={e => setSearchSymbol(e.target.value)} placeholder="Поиск..." className="w-full bg-black/60 border border-purple-500/30 rounded-lg px-4 py-3 text-white text-lg" />{searchSymbol && <div className="absolute top-full left-0 right-0 bg-black/90 border border-purple-500/30 rounded-lg mt-1 max-h-60 overflow-y-auto z-20">{filteredPairs.map(p => <div key={p} onClick={() => { setSymbol(p); setSearchSymbol(p); }} className={`px-4 py-2 cursor-pointer hover:bg-purple-500/20 text-sm ${symbol === p ? 'bg-purple-500/30' : ''}`}>{p}</div>)}</div>}</div><button onClick={analyze} disabled={loading} className={`px-8 py-3 rounded-xl font-bold text-lg ${loading ? 'bg-gray-700 animate-pulse' : 'bg-gradient-to-r from-purple-600 to-cyan-600'}`}>{loading ? '⏳' : '🔍'}</button></div>
             {analysis && (
               <div className={`p-6 rounded-xl border-2 ${analysis.action === 'LONG' ? 'bg-green-500/10 border-green-500' : analysis.action === 'SHORT' ? 'bg-red-500/10 border-red-500' : 'bg-gray-500/10 border-gray-500'}`}>
-                <div className="flex justify-between items-center mb-4">
-                  <div><span className="text-3xl font-bold">{analysis.action === 'LONG' ? '📈 ВВЕРХ' : '📉 ВНИЗ'}</span><span className="ml-3 text-lg text-gray-400">{symbol}</span></div>
-                  <div className="text-right"><div className={`text-3xl font-bold ${analysis.probability >= 75 ? 'text-green-400' : analysis.probability >= 65 ? 'text-yellow-400' : 'text-gray-400'}`}>{analysis.probability}%</div><div className={`text-xs font-bold mt-1 ${analysis.probability >= 75 ? 'text-green-400' : analysis.probability >= 65 ? 'text-yellow-400' : 'text-gray-400'}`}>{analysis.probability >= 75 ? '🔥 БЕРИ!' : analysis.probability >= 65 ? '👍 Можно' : '👀 Риск'}</div></div>
-                </div>
-
-                <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-3 mb-4 text-center">
-                  <div className="text-xs text-yellow-400">⏱ ВРЕМЯ ЭКСПИРАЦИИ (5 минут)</div>
-                  <div className="text-2xl font-bold text-yellow-400">{analysis.expiryTime}</div>
-                </div>
-
+                <div className="flex justify-between items-center mb-4"><div><span className="text-3xl font-bold">{analysis.action === 'LONG' ? '📈 ВВЕРХ' : '📉 ВНИЗ'}</span><span className="ml-3 text-lg text-gray-400">{symbol}</span></div><div className="text-right"><div className={`text-3xl font-bold ${analysis.probability >= 75 ? 'text-green-400' : analysis.probability >= 65 ? 'text-yellow-400' : 'text-gray-400'}`}>{analysis.probability}%</div><div className={`text-xs font-bold mt-1 ${analysis.probability >= 75 ? 'text-green-400' : analysis.probability >= 65 ? 'text-yellow-400' : 'text-gray-400'}`}>{analysis.probability >= 75 ? '🔥 БЕРИ!' : analysis.probability >= 65 ? '👍 Можно' : '👀 Риск'}</div></div></div>
+                <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-3 mb-4 text-center"><div className="text-xs text-yellow-400">⏱ ВРЕМЯ ЭКСПИРАЦИИ (5 минут)</div><div className="text-2xl font-bold text-yellow-400">{analysis.expiryTime}</div></div>
                 <div className="grid grid-cols-4 gap-2 mb-4">{analysis.predictions.map(p => <div key={p.min} className={`bg-black/40 rounded-lg p-3 text-center border ${p.direction === 'up' ? 'border-green-500/30' : 'border-red-500/30'}`}><div className="text-xs text-gray-500">{p.min}м</div><div className={`text-lg font-bold ${p.direction === 'up' ? 'text-green-400' : 'text-red-400'}`}>${formatPrice(p.price)}</div></div>)}</div>
-
                 <div className="grid grid-cols-3 gap-3 mb-4 text-sm"><div className="bg-black/40 rounded-lg p-3 text-center"><div className="text-gray-500">Вход</div><div className="text-white font-bold">${formatPrice(analysis.entry)}</div></div><div className="bg-black/40 rounded-lg p-3 text-center"><div className="text-gray-500">TP</div><div className="text-green-400 font-bold">${formatPrice(analysis.tp)}</div></div><div className="bg-black/40 rounded-lg p-3 text-center"><div className="text-gray-500">SL</div><div className="text-red-400 font-bold">${formatPrice(analysis.sl)}</div></div></div>
                 <div className="bg-purple-500/10 border border-purple-500/20 rounded-lg p-4 mb-4"><div className="text-sm text-gray-300">{analysis.aiText}</div></div>
                 <div className="grid grid-cols-4 gap-2 text-xs mb-4"><div className="bg-black/30 rounded p-2 text-center"><div className="text-gray-500">RSI</div><div className={analysis.rsi < 30 ? 'text-green-400' : analysis.rsi > 70 ? 'text-red-400' : 'text-white'}>{analysis.rsi}</div></div><div className="bg-black/30 rounded p-2 text-center"><div className="text-gray-500">STOCH</div><div className={analysis.stoch < 20 ? 'text-green-400' : analysis.stoch > 80 ? 'text-red-400' : 'text-white'}>{analysis.stoch}</div></div><div className="bg-black/30 rounded p-2 text-center"><div className="text-gray-500">ADX</div><div className="text-white">{analysis.adx}</div></div><div className="bg-black/30 rounded p-2 text-center"><div className="text-gray-500">MACD</div><div className={analysis.macd > 0 ? 'text-green-400' : 'text-red-400'}>{analysis.macd.toFixed(4)}</div></div></div>
@@ -297,7 +288,7 @@ const App = () => {
         <div className="bg-black/40 rounded-xl border border-purple-500/20 overflow-hidden mb-6">
           <div className="p-3 bg-purple-950/20 border-b border-purple-500/20 text-sm font-bold text-purple-300">📊 POCKET OPTION | <span className={poWinRate >= 50 ? 'text-green-400' : 'text-red-400'}>WR: {poWinRate}% ({poWins}/{poTotal})</span></div>
           <div className="divide-y divide-gray-800 max-h-40 overflow-y-auto">
-            {poTrades.length === 0 ? <div className="p-4 text-center text-gray-500 text-sm">Нет записей. Отмечай результат.</div> : poTrades.map(t => (
+            {poTrades.length === 0 ? <div className="p-4 text-center text-gray-500 text-sm">Нет записей</div> : poTrades.map(t => (
               <div key={t.id} className="p-2 flex justify-between items-center text-sm"><div><span className={t.action === 'UP' ? 'text-green-400' : 'text-red-400'}>{t.action === 'UP' ? '📈' : '📉'}</span><span className="ml-2 text-gray-400">{t.symbol}</span></div><div className="flex items-center gap-3"><span className={t.result === 'win' ? 'text-green-400' : 'text-red-400'}>{t.result === 'win' ? '✅' : '❌'}</span><span className="text-gray-600 text-xs">{t.time}</span></div></div>
             ))}
           </div>

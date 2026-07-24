@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 
 const DEEPSEEK_API_KEY = 'sk-0ea0af4af3dd4a849db43f56eb186b46';
 
+// Все ликвидные пары с Bybit (спот + фьючерсы)
 const TOP_PAIRS = [
   'BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'XRPUSDT', 'DOGEUSDT', 'ADAUSDT',
   'AVAXUSDT', 'DOTUSDT', 'MATICUSDT', 'LINKUSDT', 'LTCUSDT', 'UNIUSDT', 'ATOMUSDT',
@@ -13,7 +14,29 @@ const TOP_PAIRS = [
   'SEIUSDT', 'WLDUSDT', 'TIAUSDT', 'JUPUSDT', 'PYTHUSDT', 'ENAUSDT', 'FETUSDT',
   'BEAMUSDT', 'BLURUSDT', 'ORDIUSDT', 'PENDLEUSDT', 'ENSUSDT', 'LDOUSDT',
   'TONUSDT', 'NOTUSDT', 'MEWUSDT', 'POPCATUSDT', 'RAYUSDT', 'JTOUSDT',
-  'TRXUSDT', 'XLMUSDT', 'XTZUSDT', 'CAKEUSDT', '1INCHUSDT', 'SNXUSDT', 'CRVUSDT'
+  'TRXUSDT', 'XLMUSDT', 'XTZUSDT', 'CAKEUSDT', '1INCHUSDT', 'SNXUSDT', 'CRVUSDT',
+  'ZROUSDT', 'ZKUSDT', 'ALTUSDT', 'PORTALUSDT', 'BOMEUSDT', 'TURBOUSDT', 'MEMEUSDT',
+  'BANANAUSDT', 'RAREUSDT', 'BBUSDT', 'IOUSDT', 'PIXELUSDT', 'SAGAUSDT', 'DYMUSDT',
+  'OMNIUSDT', 'REZUSDT', 'ETHFIUSDT', 'STRKUSDT', 'GMXUSDT', 'LRCUSDT', 'SUPERUSDT',
+  'MINAUSDT', 'YGGUSDT', 'CKBUSDT', 'SUSHIUSDT', 'THETAUSDT', 'APEUSDT', 'BALUSDT',
+  'ENJUSDT', 'HOTUSDT', 'JASMYUSDT', 'KDAUSDT', 'MAGICUSDT', 'OCEANUSDT', 'QNTUSDT',
+  'RVNUSDT', 'SKLUSDT', 'STORJUSDT', 'UMAUSDT', 'WOOUSDT', 'ZILUSDT', 'ZRXUSDT',
+  'ANKRUSDT', 'ASTRUSDT', 'BANDUSDT', 'CELRUSDT', 'DENTUSDT', 'DYDXUSDT', 'GLMRUSDT',
+  'ICXUSDT', 'IOSTUSDT', 'IOTXUSDT', 'JOEUSDT', 'KNCUSDT', 'LINAUSDT', 'LPTUSDT',
+  'MOVRUSDT', 'NKNUSDT', 'OGNUSDT', 'OMUSDT', 'ONTUSDT', 'PERPUSDT', 'POWRUSDT',
+  'RENUSDT', 'ROSEUSDT', 'SFPUSDT', 'SPELLUSDT', 'SSVUSDT', 'SXPUSDT', 'TRBUSDT',
+  'TRUUSDT', 'VRAUSDT', 'WAXPUSDT', 'CFXUSDT', 'MASKUSDT', 'CELOUSDT', 'COTIUSDT',
+  'STEEMUSDT', 'SUNUSDT', 'TLMUSDT', 'TOMIUSDT', 'TWTUSDT', 'UNFIUSDT',
+  'USTCUSDT', 'UTKUSDT', 'VTHOUSDT', 'WAVESUSDT', 'XVGUSDT', 'XVSUSDT',
+  'ZENUSDT', 'AGLDUSDT', 'ALICEUSDT', 'ALPHAUSDT', 'AMPUSDT', 'ANTUSDT',
+  'API3USDT', 'ARUSDT', 'BICOUSDT', 'BLZUSDT', 'BNTUSDT', 'CHRUSDT',
+  'CLVUSDT', 'CTKUSDT', 'CTSIUSDT', 'CVCUSDT', 'DGBUSDT', 'DIAUSDT',
+  'DODOUSDT', 'DUSKUSDT', 'EDUUSDT', 'ERNUSDT', 'FLMUSDT', 'FORTHUSDT',
+  'FUNUSDT', 'GLMUSDT', 'IDUSDT', 'ILVUSDT', 'KLAYUSDT', 'LOOMUSDT',
+  'LQTYUSDT', 'MDTUSDT', 'MTLUSDT', 'MULTIUSDT', 'NMRUSDT', 'OXTUSDT',
+  'POLSUSDT', 'PROMUSDT', 'RADUSDT', 'REEFUSDT', 'REQUSDT', 'RLCUSDT',
+  'SLPUSDT', 'SNTUSDT', 'STRAXUSDT', 'TRACUSDT', '1000PEPEUSDT', '1000BONKUSDT',
+  '1000FLOKIUSDT', '1000SHIBUSDT', '1000WIFUSDT', '1000BOMEUSDT', '1000TURBOUSDT'
 ];
 
 // ==================== ИНДИКАТОРЫ ====================
@@ -24,46 +47,34 @@ const calcRSI = (p: number[], per = 14): number => {
   if (l === 0) return 100;
   return Math.round(100 - 100 / (1 + (g / per) / (l / per)));
 };
-
 const calcEMA = (p: number[], per: number): number => {
   if (p.length < per) return p[p.length - 1] || 0;
   const k = 2 / (per + 1); let e = p[0];
   for (let i = 1; i < p.length; i++) e = (p[i] - e) * k + e;
   return e;
 };
-
-// MACD с определением пересечения
 const calcMACD = (p: number[]): { macd: number; signal: number; histogram: number; crossed: 'up' | 'down' | null } => {
   if (p.length < 35) return { macd: 0, signal: 0, histogram: 0, crossed: null };
   const ema12 = calcEMA(p, 12), ema26 = calcEMA(p, 26);
   const macd = parseFloat((ema12 - ema26).toFixed(4));
-  
-  // Считаем предыдущие значения для определения пересечения
-  const prevPrices = p.slice(0, -1);
-  const prevEma12 = calcEMA(prevPrices, 12), prevEma26 = calcEMA(prevPrices, 26);
+  const prevP = p.slice(0, -1);
+  const prevEma12 = calcEMA(prevP, 12), prevEma26 = calcEMA(prevP, 26);
   const prevMacd = parseFloat((prevEma12 - prevEma26).toFixed(4));
-  
   const macdValues = p.slice(25).map((_, i) => calcEMA(p.slice(0, i + 26), 12) - calcEMA(p.slice(0, i + 26), 26));
   const signal = parseFloat(calcEMA(macdValues, 9).toFixed(4));
-  
-  const prevMacdValues = prevPrices.slice(25).map((_, i) => calcEMA(prevPrices.slice(0, i + 26), 12) - calcEMA(prevPrices.slice(0, i + 26), 26));
+  const prevMacdValues = prevP.slice(25).map((_, i) => calcEMA(prevP.slice(0, i + 26), 12) - calcEMA(prevP.slice(0, i + 26), 26));
   const prevSignal = parseFloat(calcEMA(prevMacdValues, 9).toFixed(4));
-  
-  // Определяем пересечение
   let crossed: 'up' | 'down' | null = null;
-  if (prevMacd <= prevSignal && macd > signal) crossed = 'up';    // Синяя пересекла красную вверх
-  else if (prevMacd >= prevSignal && macd < signal) crossed = 'down'; // Синяя пересекла красную вниз
-  
+  if (prevMacd <= prevSignal && macd > signal) crossed = 'up';
+  else if (prevMacd >= prevSignal && macd < signal) crossed = 'down';
   return { macd, signal, histogram: parseFloat((macd - signal).toFixed(4)), crossed };
 };
-
 const calcStoch = (p: number[], per = 14): { k: number; d: number } => {
   if (p.length < per) return { k: 50, d: 50 };
   const s = p.slice(-per); const h = Math.max(...s), l = Math.min(...s);
   const k = h === l ? 50 : ((p[p.length - 1] - l) / (h - l)) * 100;
   return { k: Math.round(k), d: Math.round(k) };
 };
-
 const calcADX = (p: number[], per = 14): number => {
   if (p.length < per * 2) return 0;
   const tr: number[] = [], pDM: number[] = [], mDM: number[] = [];
@@ -76,80 +87,79 @@ const calcADX = (p: number[], per = 14): number => {
   const a = smooth(tr); if (!a) return 0;
   return Math.round(Math.abs(smooth(pDM)-smooth(mDM))/(smooth(pDM)+smooth(mDM))*100);
 };
-
-// Получение Funding Rate
 const getFundingRate = async (sym: string): Promise<number> => {
-  try {
-    const res = await fetch(`https://api.bybit.com/v5/market/funding/history?category=linear&symbol=${sym}&limit=1`);
-    const data = await res.json();
-    if (data.retCode === 0 && data.result?.list?.length > 0) {
-      return parseFloat(data.result.list[0].fundingRate) * 100;
-    }
-  } catch {}
+  try { const r = await fetch(`https://api.bybit.com/v5/market/funding/history?category=linear&symbol=${sym}&limit=1`); const d = await r.json(); if (d.retCode === 0 && d.result?.list?.length > 0) return parseFloat(d.result.list[0].fundingRate) * 100; } catch {}
   return 0;
 };
 
-// DeepSeek AI с расширенным анализом
-const getDeepSeekAI = async (sym: string, rsi: number, stoch: number, adx: number, macdData: { macd: number; signal: number; histogram: number; crossed: 'up' | 'down' | null }, action: string, price: number, klines: number[], fundingRate: number): Promise<string> => {
+// DeepSeek AI
+const getDeepSeekAI = async (sym: string, rsi: number, stoch: number, adx: number, macdData: any, action: string, price: number, klines: number[], fundingRate: number): Promise<string> => {
   try {
-    const high20 = Math.max(...klines.slice(-20));
-    const low20 = Math.min(...klines.slice(-20));
-    const support = low20 * 0.995;
-    const resistance = high20 * 1.005;
-    const volatility = ((high20 - low20) / low20 * 100).toFixed(2);
+    const h = Math.max(...klines.slice(-20)), l = Math.min(...klines.slice(-20));
+    const support = l * 0.995, resistance = h * 1.005;
+    const vol = ((h - l) / l * 100).toFixed(2);
     const trend = price > calcEMA(klines, 50) ? 'бычий' : price < calcEMA(klines, 50) ? 'медвежий' : 'флэт';
-    const macdCross = macdData.crossed === 'up' ? 'MACD пересечение ВВЕРХ (сильный бычий сигнал)' : macdData.crossed === 'down' ? 'MACD пересечение ВНИЗ (сильный медвежий сигнал)' : 'MACD без пересечения';
-    const fundingText = fundingRate > 0.1 ? `Фандинг высокий (${fundingRate.toFixed(3)}%) — рынок перегрет в лонг` : fundingRate < -0.1 ? `Фандинг низкий (${fundingRate.toFixed(3)}%) — рынок перегрет в шорт` : `Фандинг нормальный (${fundingRate.toFixed(3)}%)`;
-
-    const prompt = `Теханализ ${sym}: цена=$${price}, RSI=${rsi}, Stoch=${stoch}, ADX=${adx}, ${macdCross}, гистограмма=${macdData.histogram}, волатильность=${volatility}%, поддержка=$${support.toFixed(4)}, сопротивление=$${resistance.toFixed(4)}, тренд=${trend}, ${fundingText}. Сигнал: ${action}. Дай краткую рекомендацию на русском: почему сигнал, ключевые уровни, риски.`;
-
+    const cross = macdData.crossed === 'up' ? 'MACD↑' : macdData.crossed === 'down' ? 'MACD↓' : 'нет';
+    const fr = fundingRate > 0.1 ? `фандинг высокий (${fundingRate.toFixed(3)}%)` : fundingRate < -0.1 ? `фандинг низкий (${fundingRate.toFixed(3)}%)` : `фандинг норма (${fundingRate.toFixed(3)}%)`;
+    const prompt = `${sym}: $${price}, RSI=${rsi}, Stoch=${stoch}, ADX=${adx}, ${cross}, vol=${vol}%, S=$${support.toFixed(4)}, R=$${resistance.toFixed(4)}, ${trend}, ${fr}. Сигнал: ${action}. Дай краткую рекомендацию.`;
     const res = await fetch('https://api.deepseek.com/v1/chat/completions', {
       method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${DEEPSEEK_API_KEY}` },
-      body: JSON.stringify({ model: 'deepseek-chat', messages: [{ role: 'user', content: prompt }], max_tokens: 130, temperature: 0.3 })
+      body: JSON.stringify({ model: 'deepseek-chat', messages: [{ role: 'user', content: prompt }], max_tokens: 100, temperature: 0.3 })
     });
     const d = await res.json();
-    return d.choices?.[0]?.message?.content || `${action} сигнал. RSI=${rsi}, Stoch=${stoch}, ADX=${adx}`;
-  } catch { return `${action} сигнал. RSI=${rsi}, Stoch=${stoch}, ADX=${adx}`; }
+    return d.choices?.[0]?.message?.content || `${action}. RSI=${rsi}`;
+  } catch { return `${action}. RSI=${rsi}`; }
 };
 
-// Комбо-сигнал с MACD пересечением и Funding Rate
+// ==================== 3-УРОВНЕВАЯ СИСТЕМА ====================
 const getComboSignal = (klines: number[], fundingRate: number): { action: 'LONG' | 'SHORT' | 'SKIP'; probability: number; reasons: string[] } => {
   const price = klines[klines.length - 1];
   const rsi = calcRSI(klines), stoch = calcStoch(klines), macd = calcMACD(klines), adx = calcADX(klines);
   const ema20 = calcEMA(klines, 20), ema50 = calcEMA(klines, 50);
   const reasons: string[] = [];
-  let longScore = 0, shortScore = 0;
 
-  // RSI
-  if (rsi < 35) { longScore += rsi < 25 ? 25 : 12; reasons.push(`RSI=${rsi}`); }
-  else if (rsi > 65) { shortScore += rsi > 75 ? 25 : 12; reasons.push(`RSI=${rsi}`); }
+  // УРОВЕНЬ 1: Обязательные условия
+  const longLevel1 = rsi < 40 && stoch.k < 30 && adx > 18;
+  const shortLevel1 = rsi > 60 && stoch.k > 70 && adx > 18;
+  if (!longLevel1 && !shortLevel1) return { action: 'SKIP', probability: 0, reasons: ['Уровень 1 не пройден'] };
 
-  // Stochastic
-  if (stoch.k < 25) { longScore += stoch.k < 15 ? 25 : 12; reasons.push(`Stoch=${stoch.k}`); }
-  else if (stoch.k > 75) { shortScore += stoch.k > 85 ? 25 : 12; reasons.push(`Stoch=${stoch.k}`); }
+  // УРОВЕНЬ 2: Подтверждающие (минимум 2 из 5)
+  let longConfirms = 0, shortConfirms = 0;
+  
+  if (macd.crossed === 'up') longConfirms++;
+  else if (macd.crossed === 'down') shortConfirms++;
+  
+  if (price > ema50) longConfirms++; else if (price < ema50) shortConfirms++;
+  if (fundingRate < -0.05) longConfirms++; else if (fundingRate > 0.05) shortConfirms++;
+  if (macd.histogram > 0) longConfirms++; else if (macd.histogram < 0) shortConfirms++;
+  if (price > ema20) longConfirms++; else if (price < ema20) shortConfirms++;
 
-  // MACD с пересечением
-  if (macd.crossed === 'up') { longScore += 25; reasons.push('MACD пересечение ↑↑↑'); }
-  else if (macd.crossed === 'down') { shortScore += 25; reasons.push('MACD пересечение ↓↓↓'); }
-  else if (macd.histogram > 0) { longScore += 12; reasons.push('MACD↑'); }
-  else if (macd.histogram < 0) { shortScore += 12; reasons.push('MACD↓'); }
+  // УРОВЕНЬ 3: Бонусы
+  let longBonus = 0, shortBonus = 0;
+  if (rsi < 25) longBonus += 15;
+  if (rsi > 75) shortBonus += 15;
+  if (stoch.k < 15) longBonus += 10;
+  if (stoch.k > 85) shortBonus += 10;
+  if (macd.crossed === 'up') longBonus += 20;
+  if (macd.crossed === 'down') shortBonus += 20;
+  if (adx > 30) { longBonus += 10; shortBonus += 10; }
 
-  // ADX
-  if (adx > 25) { longScore += 12; shortScore += 12; reasons.push(`ADX=${adx}`); }
-  else if (adx > 18) { longScore += 5; shortScore += 5; }
+  // Итоговая вероятность
+  let probability = 50;
+  if (longLevel1 && longConfirms >= 2) {
+    probability = 60 + longConfirms * 5 + longBonus / 3;
+    reasons.push(`RSI=${rsi}`, `Stoch=${stoch.k}`, `ADX=${adx}`, `Подтв:${longConfirms}/5`);
+    if (longBonus > 0) reasons.push(`Бонус:${longBonus}`);
+    return { action: 'LONG', probability: Math.min(95, Math.round(probability)), reasons };
+  }
+  if (shortLevel1 && shortConfirms >= 2) {
+    probability = 60 + shortConfirms * 5 + shortBonus / 3;
+    reasons.push(`RSI=${rsi}`, `Stoch=${stoch.k}`, `ADX=${adx}`, `Подтв:${shortConfirms}/5`);
+    if (shortBonus > 0) reasons.push(`Бонус:${shortBonus}`);
+    return { action: 'SHORT', probability: Math.min(95, Math.round(probability)), reasons };
+  }
 
-  // EMA
-  if (price > ema20) { longScore += 8; } else { shortScore += 8; }
-  if (price > ema50) { longScore += 5; } else { shortScore += 5; }
-
-  // Funding Rate — контрианский индикатор
-  if (fundingRate > 0.15) { shortScore += 15; reasons.push(`Фандинг высокий (${fundingRate.toFixed(2)}%)`); }
-  else if (fundingRate < -0.15) { longScore += 15; reasons.push(`Фандинг низкий (${fundingRate.toFixed(2)}%)`); }
-
-  // Порог 70 для высокой уверенности
-  if (longScore >= 70) return { action: 'LONG', probability: Math.min(95, longScore), reasons };
-  if (shortScore >= 70) return { action: 'SHORT', probability: Math.min(95, shortScore), reasons };
-  return { action: 'SKIP', probability: 0, reasons };
+  return { action: 'SKIP', probability: 0, reasons: [`Подтв:${longLevel1 ? longConfirms : shortConfirms}/5 (нужно 2)`] };
 };
 
 // Типы
@@ -185,31 +195,27 @@ const App = () => {
 
   useEffect(() => { localStorage.setItem('trades', JSON.stringify(trades)); if (sessionId) localStorage.setItem('sessionId', sessionId); }, [trades, sessionId]);
   useEffect(() => { const f = async () => { try { const r = await fetch('https://api.bybit.com/v5/market/tickers?category=spot'); const d = await r.json(); if (d.result?.list) { const m = new Map<string, number>(); d.result.list.forEach((t: any) => m.set(t.symbol, parseFloat(t.lastPrice))); setCurrentPrices(m); } } catch {} }; f(); const i = setInterval(f, 5000); return () => clearInterval(i); }, []);
-  useEffect(() => { fetch('https://api.bybit.com/v5/market/tickers?category=spot').then(r => r.json()).then(d => { if (d.result?.list) setPairs(d.result.list.filter((t: any) => t.symbol.endsWith('USDT') && parseFloat(t.volume24h) > 500000).map((t: any) => t.symbol)); }).catch(() => {}); }, []);
+  useEffect(() => { fetch('https://api.bybit.com/v5/market/tickers?category=spot').then(r => r.json()).then(d => { if (d.result?.list) setPairs(d.result.list.filter((t: any) => t.symbol.endsWith('USDT') && parseFloat(t.volume24h) > 100000).map((t: any) => t.symbol)); }).catch(() => {}); }, []);
   useEffect(() => { if (notifyEnabled && 'Notification' in window && Notification.permission === 'default') { Notification.requestPermission(); } }, [notifyEnabled]);
 
   const filteredPairs = pairs.filter(p => p.includes(searchSymbol.toUpperCase())).slice(0, 50);
-  
   const fetchKlines = async (sym: string): Promise<number[]> => {
     try { const r = await fetch(`https://api.bybit.com/v5/market/kline?category=spot&symbol=${sym}&interval=15&limit=100`); const d = await r.json(); if (d.retCode === 0 && d.result?.list) return d.result.list.reverse().map((c: any) => parseFloat(c[4])); } catch {}
     return [];
   };
-
   const analyzeSymbol = async (sym: string): Promise<Analysis | null> => {
-    try { const tr = await fetch(`https://api.bybit.com/v5/market/tickers?category=spot&symbol=${sym}`); const td = await tr.json(); if (parseFloat(td?.result?.list?.[0]?.volume24h || '0') < 500000) return null; } catch {}
+    try { const tr = await fetch(`https://api.bybit.com/v5/market/tickers?category=spot&symbol=${sym}`); const td = await tr.json(); if (parseFloat(td?.result?.list?.[0]?.volume24h || '0') < 100000) return null; } catch {}
     const [k, fundingRate] = await Promise.all([fetchKlines(sym), getFundingRate(sym)]);
     if (k.length < 50) return null;
     const price = k[k.length - 1], rsi = calcRSI(k), stoch = calcStoch(k), macd = calcMACD(k), adx = calcADX(k);
     const sig = getComboSignal(k, fundingRate);
-    const tp = sig.action === 'LONG' ? price * 1.02 : price * 0.98;
-    const sl = sig.action === 'LONG' ? price * 0.993 : price * 1.007;
+    const tp = sig.action === 'LONG' ? price * 1.015 : price * 0.985;
+    const sl = sig.action === 'LONG' ? price * 0.995 : price * 1.005;
     let ai = sig.action === 'SKIP' ? `Нет сигнала. ${sig.reasons.join('. ')}.` : `${sig.action} (${sig.probability}%). ${sig.reasons.join('. ')}. TP:$${tp.toFixed(4)} SL:$${sl.toFixed(4)}`;
     if (sig.action !== 'SKIP') ai = `🤖 DeepSeek: ${await getDeepSeekAI(sym, rsi, stoch.k, adx, macd, sig.action, price, k, fundingRate)}`;
     return { action: sig.action, probability: sig.probability, rsi, stoch: stoch.k, adx, macd: macd.histogram, tp, sl, entry: price, aiText: ai };
   };
-
   const analyze = async () => { setLoading(true); const r = await analyzeSymbol(symbol); if (r) { setAnalysis(r); if (r.action !== 'SKIP' && notifyEnabled) { try { new Notification(`🤖 ${r.action} ${symbol}`, { body: `${r.probability}% | $${formatPrice(r.entry)}` }); } catch {} } } setLoading(false); };
-
   const autoScan = async () => {
     setAutoScanning(true); const sigs: Signal[] = [];
     for (let i = 0; i < TOP_PAIRS.length; i += 5) {
@@ -220,7 +226,6 @@ const App = () => {
     setLastAutoScan(new Date().toLocaleTimeString()); setAutoScanning(false);
     if (sigs.length > 0) showToast(`🎯 ${sigs.length} сигналов!`);
   };
-
   const showToast = (m: string) => { setToast(m); setTimeout(() => setToast(''), 3000); };
   useEffect(() => { if (mode === 'auto') { autoScan(); const i = setInterval(autoScan, 120000); return () => clearInterval(i); } }, [mode]);
 
@@ -256,9 +261,9 @@ const App = () => {
             <div className="flex gap-3 mb-4"><div className="relative flex-1"><input value={searchSymbol} onChange={e => setSearchSymbol(e.target.value)} placeholder="Поиск пары..." className="w-full bg-black/60 border border-purple-500/30 rounded-lg px-4 py-3 text-white text-lg focus:border-purple-400 outline-none" />{searchSymbol && <div className="absolute top-full left-0 right-0 bg-black/90 border border-purple-500/30 rounded-lg mt-1 max-h-60 overflow-y-auto z-20">{filteredPairs.map(p => <div key={p} onClick={() => { setSymbol(p); setSearchSymbol(p); }} className={`px-4 py-2 cursor-pointer hover:bg-purple-500/20 text-sm ${symbol === p ? 'bg-purple-500/30' : ''}`}>{p}</div>)}</div>}</div><button onClick={analyze} disabled={loading} className={`px-8 py-3 rounded-xl font-bold text-lg ${loading ? 'bg-gray-700 animate-pulse' : 'bg-gradient-to-r from-purple-600 to-cyan-600 hover:from-purple-500 hover:to-cyan-500 shadow-lg shadow-purple-500/20'}`}>{loading ? '⏳' : '🔍 АНАЛИЗ'}</button></div>
             {analysis && (
               <div className={`p-6 rounded-xl border-2 animate-[fadeIn_0.3s_ease-out] ${analysis.action === 'LONG' ? 'bg-green-500/10 border-green-500 shadow-[0_0_30px_rgba(34,197,94,0.2)]' : analysis.action === 'SHORT' ? 'bg-red-500/10 border-red-500 shadow-[0_0_30px_rgba(239,68,68,0.2)]' : 'bg-gray-500/10 border-gray-500'}`}>
-                <div className="flex justify-between items-center mb-4"><div><span className="text-3xl font-bold">{analysis.action}</span><span className="ml-3 text-lg text-gray-400">{symbol}</span></div><div className={`text-3xl font-bold ${analysis.probability >= 75 ? 'text-green-400' : analysis.probability >= 60 ? 'text-yellow-400' : 'text-gray-400'}`}>{analysis.probability}%</div></div>
-                <div className="grid grid-cols-3 gap-3 mb-4 text-sm"><div className="bg-black/40 rounded-lg p-3 text-center"><div className="text-gray-500">Вход</div><div className="text-white font-bold">${formatPrice(analysis.entry)}</div></div><div className="bg-black/40 rounded-lg p-3 text-center"><div className="text-gray-500">TP +2%</div><div className="text-green-400 font-bold">${formatPrice(analysis.tp)}</div></div><div className="bg-black/40 rounded-lg p-3 text-center"><div className="text-gray-500">SL -0.7%</div><div className="text-red-400 font-bold">${formatPrice(analysis.sl)}</div></div></div>
-                <div className="bg-purple-500/10 border border-purple-500/20 rounded-lg p-4 mb-4"><div className="text-xs text-purple-400 mb-1">🤖 DeepSeek AI — полный анализ</div><div className="text-sm text-gray-300 whitespace-pre-line">{analysis.aiText}</div></div>
+                <div className="flex justify-between items-center mb-4"><div><span className="text-3xl font-bold">{analysis.action}</span><span className="ml-3 text-lg text-gray-400">{symbol}</span></div><div className={`text-3xl font-bold ${analysis.probability >= 70 ? 'text-green-400' : analysis.probability >= 60 ? 'text-yellow-400' : 'text-gray-400'}`}>{analysis.probability}%</div></div>
+                <div className="grid grid-cols-3 gap-3 mb-4 text-sm"><div className="bg-black/40 rounded-lg p-3 text-center"><div className="text-gray-500">Вход</div><div className="text-white font-bold">${formatPrice(analysis.entry)}</div></div><div className="bg-black/40 rounded-lg p-3 text-center"><div className="text-gray-500">TP +1.5%</div><div className="text-green-400 font-bold">${formatPrice(analysis.tp)}</div></div><div className="bg-black/40 rounded-lg p-3 text-center"><div className="text-gray-500">SL -0.5%</div><div className="text-red-400 font-bold">${formatPrice(analysis.sl)}</div></div></div>
+                <div className="bg-purple-500/10 border border-purple-500/20 rounded-lg p-4 mb-4"><div className="text-xs text-purple-400 mb-1">🤖 DeepSeek AI</div><div className="text-sm text-gray-300 whitespace-pre-line">{analysis.aiText}</div></div>
                 <div className="grid grid-cols-4 gap-2 text-xs mb-4"><div className="bg-black/30 rounded p-2 text-center"><div className="text-gray-500">RSI</div><div className={analysis.rsi < 30 ? 'text-green-400' : analysis.rsi > 70 ? 'text-red-400' : 'text-white'}>{analysis.rsi}</div></div><div className="bg-black/30 rounded p-2 text-center"><div className="text-gray-500">STOCH</div><div className={analysis.stoch < 20 ? 'text-green-400' : analysis.stoch > 80 ? 'text-red-400' : 'text-white'}>{analysis.stoch}</div></div><div className="bg-black/30 rounded p-2 text-center"><div className="text-gray-500">ADX</div><div className="text-white">{analysis.adx}</div></div><div className="bg-black/30 rounded p-2 text-center"><div className="text-gray-500">MACD</div><div className={analysis.macd > 0 ? 'text-green-400' : 'text-red-400'}>{analysis.macd.toFixed(4)}</div></div></div>
                 <div className="flex gap-3"><button onClick={() => openTrade('LONG', symbol, analysis.entry)} className={`flex-1 py-3 rounded-xl font-bold text-lg ${analysis.action === 'LONG' ? 'bg-green-600 hover:bg-green-500 animate-pulse shadow-lg shadow-green-500/30' : 'bg-gray-700 hover:bg-gray-600'}`}>🟢 LONG</button><button onClick={() => openTrade('SHORT', symbol, analysis.entry)} className={`flex-1 py-3 rounded-xl font-bold text-lg ${analysis.action === 'SHORT' ? 'bg-red-600 hover:bg-red-500 animate-pulse shadow-lg shadow-red-500/30' : 'bg-gray-700 hover:bg-gray-600'}`}>🔴 SHORT</button><button className="flex-1 py-3 rounded-xl font-bold text-lg bg-gray-700 hover:bg-gray-600">⚪ SKIP</button></div>
               </div>
@@ -272,8 +277,8 @@ const App = () => {
             <div className="space-y-3">
               {autoSignals.map((s, i) => (
                 <div key={i} className={`rounded-xl border hover:scale-[1.01] transition-all ${s.action === 'LONG' ? 'bg-green-500/5 border-green-500/30' : 'bg-red-500/5 border-red-500/30'}`}>
-                  <div className="p-4"><div className="flex justify-between items-center mb-3"><div><span className="font-bold text-lg">{s.symbol}</span><span className={`ml-2 px-2 py-0.5 rounded text-xs font-bold ${s.action === 'LONG' ? 'bg-green-600' : 'bg-red-600'}`}>{s.action}</span></div><div className="flex items-center gap-3"><div className={`text-lg font-bold ${s.probability >= 75 ? 'text-green-400' : s.probability >= 60 ? 'text-yellow-400' : 'text-gray-400'}`}>{s.probability}%</div><button onClick={() => openTrade(s.action, s.symbol, s.price)} className={`px-4 py-2 rounded-lg text-sm font-bold ${s.action === 'LONG' ? 'bg-green-600 hover:bg-green-500' : 'bg-red-600 hover:bg-red-500'}`}>{s.action}</button></div></div>
-                    <div className="grid grid-cols-4 gap-2 mb-3 text-xs"><div className="bg-black/30 rounded p-2 text-center"><div className="text-gray-500">Цена</div><div className="text-white">${formatPrice(s.price)}</div></div><div className="bg-black/30 rounded p-2 text-center"><div className="text-gray-500">TP +2%</div><div className="text-green-400">${formatPrice(s.tp)}</div></div><div className="bg-black/30 rounded p-2 text-center"><div className="text-gray-500">SL -0.7%</div><div className="text-red-400">${formatPrice(s.sl)}</div></div><div className="bg-black/30 rounded p-2 text-center"><div className="text-gray-500">RSI/ST/ADX</div><div className="text-white text-[10px]">{s.rsi}/{s.stoch}/{s.adx}</div></div></div>
+                  <div className="p-4"><div className="flex justify-between items-center mb-3"><div><span className="font-bold text-lg">{s.symbol}</span><span className={`ml-2 px-2 py-0.5 rounded text-xs font-bold ${s.action === 'LONG' ? 'bg-green-600' : 'bg-red-600'}`}>{s.action}</span></div><div className="flex items-center gap-3"><div className={`text-lg font-bold ${s.probability >= 70 ? 'text-green-400' : s.probability >= 60 ? 'text-yellow-400' : 'text-gray-400'}`}>{s.probability}%</div><button onClick={() => openTrade(s.action, s.symbol, s.price)} className={`px-4 py-2 rounded-lg text-sm font-bold ${s.action === 'LONG' ? 'bg-green-600 hover:bg-green-500' : 'bg-red-600 hover:bg-red-500'}`}>{s.action}</button></div></div>
+                    <div className="grid grid-cols-4 gap-2 mb-3 text-xs"><div className="bg-black/30 rounded p-2 text-center"><div className="text-gray-500">Цена</div><div className="text-white">${formatPrice(s.price)}</div></div><div className="bg-black/30 rounded p-2 text-center"><div className="text-gray-500">TP</div><div className="text-green-400">${formatPrice(s.tp)}</div></div><div className="bg-black/30 rounded p-2 text-center"><div className="text-gray-500">SL</div><div className="text-red-400">${formatPrice(s.sl)}</div></div><div className="bg-black/30 rounded p-2 text-center"><div className="text-gray-500">RSI/ST/ADX</div><div className="text-white text-[10px]">{s.rsi}/{s.stoch}/{s.adx}</div></div></div>
                     <div className="bg-purple-500/10 border border-purple-500/20 rounded-lg p-3"><div className="text-xs text-purple-400 mb-1">🤖 DeepSeek AI</div><div className="text-xs text-gray-300">{s.aiReason}</div></div>
                   </div>
                 </div>

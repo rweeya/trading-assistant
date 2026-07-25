@@ -36,7 +36,7 @@ const TOP_PAIRS = [
   'BABA_OTC', 'DIS_OTC', 'ADBE_OTC', 'CRM_OTC', 'WMT_OTC', 'MA_OTC'
 ];
 
-const CORS_PROXY = 'https://api.allorigins.win/raw?url=';
+const CORS_PROXY = '/api/proxy?url=';
 
 const calcRSI = (p: number[], per = 14): number => {
   if (p.length < per + 1) return 50;

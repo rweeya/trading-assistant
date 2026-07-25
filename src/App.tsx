@@ -146,8 +146,11 @@ const getComboSignal = (klines: number[]): { action: 'LONG' | 'SHORT' | 'SKIP'; 
   const price = klines[klines.length - 1];
   const rsi = calcRSI(klines), stoch = calcStoch(klines), macd = calcMACD(klines), adx = calcADX(klines);
   const ema20 = calcEMA(klines, 20), ema50 = calcEMA(klines, 50);
-  const longLevel1 = rsi < 40 && stoch.k < 30 && adx > 18;
-  const shortLevel1 = rsi > 60 && stoch.k > 70 && adx > 18;
+  
+  // Смягчённые условия
+  const longLevel1 = rsi < 45 && stoch.k < 35 && adx > 15;
+  const shortLevel1 = rsi > 55 && stoch.k > 65 && adx > 15;
+  
   if (!longLevel1 && !shortLevel1) return { action: 'SKIP', probability: 0, reasons: [] };
 
   let longConfirms = 0, shortConfirms = 0;
@@ -164,6 +167,11 @@ const getComboSignal = (klines: number[]): { action: 'LONG' | 'SHORT' | 'SKIP'; 
 
   if (longLevel1 && longConfirms >= 2) return { action: 'LONG', probability: Math.min(95, 60 + longConfirms * 5 + Math.round(longBonus / 3)), reasons: [] };
   if (shortLevel1 && shortConfirms >= 2) return { action: 'SHORT', probability: Math.min(95, 60 + shortConfirms * 5 + Math.round(shortBonus / 3)), reasons: [] };
+  
+  // Если уровень 1 пройден но подтверждений мало — показываем сигнал с низкой вероятностью
+  if (longLevel1) return { action: 'LONG', probability: 45, reasons: [] };
+  if (shortLevel1) return { action: 'SHORT', probability: 45, reasons: [] };
+  
   return { action: 'SKIP', probability: 0, reasons: [] };
 };
 
@@ -242,7 +250,16 @@ const App = () => {
     const sl = sig.action === 'LONG' ? price * 0.997 : price * 1.003;
     const expiryTime = getExpiryTime();
     const predictions = [5, 10, 15].map(min => ({ min, ...predictPrice(k, min) }));
-    const ai = sig.action === 'SKIP' ? 'Нет сигнала. Жди более выгодного входа.' : `${sig.action} сигнал (${sig.probability}%). RSI=${rsi} (${rsi < 30 ? 'перепродан' : rsi > 70 ? 'перекуплен' : 'норма'}), Stoch=${stoch.k}, ADX=${adx} (${adx > 25 ? 'тренд' : 'флэт'}). TP: ${tp.toFixed(5)}, SL: ${sl.toFixed(5)}`;
+    
+    let ai = '';
+    if (sig.action === 'SKIP') {
+      ai = `Нет уверенного сигнала. RSI=${rsi} (${rsi < 30 ? 'перепродан' : rsi > 70 ? 'перекуплен' : 'нейтрально'}), Stoch=${stoch.k}, ADX=${adx} (${adx > 25 ? 'тренд' : 'флэт'}). Жди более выгодного входа.`;
+    } else if (sig.probability >= 60) {
+      ai = `${sig.action} сигнал (${sig.probability}%). RSI=${rsi} (${rsi < 30 ? 'перепродан' : rsi > 70 ? 'перекуплен' : 'норма'}), Stoch=${stoch.k}, ADX=${adx} (${adx > 25 ? 'сильный тренд' : 'тренд'}). TP: ${tp.toFixed(5)}, SL: ${sl.toFixed(5)}. Рекомендую вход!`;
+    } else {
+      ai = `Слабый ${sig.action} сигнал (${sig.probability}%). RSI=${rsi}, Stoch=${stoch.k}, ADX=${adx}. Мало подтверждений. Можно пробовать с минимальной ставкой.`;
+    }
+    
     return { action: sig.action, probability: sig.probability, rsi, stoch: stoch.k, adx, macd: macd.histogram, tp, sl, entry: price, aiText: ai, predictions, expiryTime };
   };
 
@@ -293,7 +310,6 @@ const App = () => {
   const openTrade = (action: 'LONG' | 'SHORT', sym: string, price: number) => {
     if (!sessionId) { showToast('⚠️ Начни сессию!'); return; }
     setTrades(prev => [{ id: Date.now().toString(), symbol: sym, action, entryPrice: price, exitPrice: null, profit: null, time: new Date().toLocaleTimeString(), sessionId }, ...prev]);
-    // Открываем Pocket Option с прямым переходом на актив
     const cleanSym = sym.replace('_OTC', '');
     const poSymbol = cleanSym.slice(0, 3) + '/' + cleanSym.slice(3);
     window.open(`https://pocketoption.com/trading?pair=${poSymbol}`, '_blank');
@@ -359,19 +375,10 @@ const App = () => {
           <div className={`rounded-xl p-6 border border-purple-500/20 mb-6 ${darkMode ? 'bg-black/40' : 'bg-white/80'}`}>
             <div className="flex gap-3 mb-4">
               <div className="relative flex-1">
-                <input
-                  value={searchSymbol}
-                  onChange={e => { setSearchSymbol(e.target.value); setShowDropdown(true); }}
-                  onFocus={() => setShowDropdown(true)}
-                  onBlur={() => setTimeout(() => setShowDropdown(false), 200)}
-                  placeholder="Введите актив (EURUSD, AAPL, GBPUSD_OTC...)"
-                  className={`w-full border border-purple-500/30 rounded-lg px-4 py-3 text-lg ${darkMode ? 'bg-black/60 text-white' : 'bg-white text-black'}`}
-                />
+                <input value={searchSymbol} onChange={e => { setSearchSymbol(e.target.value); setShowDropdown(true); }} onFocus={() => setShowDropdown(true)} onBlur={() => setTimeout(() => setShowDropdown(false), 200)} placeholder="Введите актив (EURUSD, AAPL, GBPUSD_OTC...)" className={`w-full border border-purple-500/30 rounded-lg px-4 py-3 text-lg ${darkMode ? 'bg-black/60 text-white' : 'bg-white text-black'}`} />
                 {showDropdown && searchResults.length > 0 && (
                   <div className={`absolute top-full left-0 right-0 border border-purple-500/30 rounded-lg mt-1 max-h-60 overflow-y-auto z-20 ${darkMode ? 'bg-black/90' : 'bg-white'}`}>
-                    {searchResults.map(p => (
-                      <div key={p} onClick={() => { setSymbol(p); setSearchSymbol(p); setShowDropdown(false); }} className={`px-4 py-2 cursor-pointer hover:bg-purple-500/20 text-sm ${symbol === p ? 'bg-purple-500/30' : ''}`}>{p}</div>
-                    ))}
+                    {searchResults.map(p => (<div key={p} onClick={() => { setSymbol(p); setSearchSymbol(p); setShowDropdown(false); }} className={`px-4 py-2 cursor-pointer hover:bg-purple-500/20 text-sm ${symbol === p ? 'bg-purple-500/30' : ''}`}>{p}</div>))}
                   </div>
                 )}
               </div>
@@ -379,7 +386,7 @@ const App = () => {
             </div>
             {analysis && (
               <div className={`p-6 rounded-xl border-2 ${analysis.action === 'LONG' ? 'bg-green-500/10 border-green-500' : analysis.action === 'SHORT' ? 'bg-red-500/10 border-red-500' : 'bg-gray-500/10 border-gray-500'}`}>
-                <div className="flex justify-between items-center mb-4"><div><span className="text-3xl font-bold">{analysis.action === 'LONG' ? '📈 ВВЕРХ' : '📉 ВНИЗ'}</span><span className="ml-3 text-lg text-gray-400">{symbol}</span></div><div className="text-right"><div className={`text-3xl font-bold ${analysis.probability >= 75 ? 'text-green-400' : analysis.probability >= 65 ? 'text-yellow-400' : 'text-gray-400'}`}>{analysis.probability}%</div><div className={`text-xs font-bold mt-1 ${analysis.probability >= 75 ? 'text-green-400' : analysis.probability >= 65 ? 'text-yellow-400' : 'text-gray-400'}`}>{analysis.probability >= 75 ? '🔥 БЕРИ!' : analysis.probability >= 65 ? '👍 Можно' : '👀 Риск'}</div></div></div>
+                <div className="flex justify-between items-center mb-4"><div><span className="text-3xl font-bold">{analysis.action === 'LONG' ? '📈 ВВЕРХ' : analysis.action === 'SHORT' ? '📉 ВНИЗ' : '⏸ СКИП'}</span><span className="ml-3 text-lg text-gray-400">{symbol}</span></div><div className="text-right"><div className={`text-3xl font-bold ${analysis.probability >= 75 ? 'text-green-400' : analysis.probability >= 60 ? 'text-yellow-400' : 'text-gray-400'}`}>{analysis.probability}%</div><div className={`text-xs font-bold mt-1 ${analysis.probability >= 75 ? 'text-green-400' : analysis.probability >= 60 ? 'text-yellow-400' : 'text-gray-400'}`}>{analysis.probability >= 75 ? '🔥 БЕРИ!' : analysis.probability >= 60 ? '👍 Можно' : '👀 Риск'}</div></div></div>
                 <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-3 mb-4 text-center"><div className="text-xs text-yellow-400">⏱ ЭКСПИРАЦИЯ (5 мин)</div><div className="text-2xl font-bold text-yellow-400">{analysis.expiryTime}</div></div>
                 <div className="grid grid-cols-3 gap-2 mb-4">{analysis.predictions.map(p => <div key={p.min} className={`bg-black/40 rounded-lg p-3 text-center border ${p.direction === 'up' ? 'border-green-500/30' : 'border-red-500/30'}`}><div className="text-xs text-gray-500">{p.min}м</div><div className={`text-lg font-bold ${p.direction === 'up' ? 'text-green-400' : 'text-red-400'}`}>{p.price.toFixed(5)}</div></div>)}</div>
                 <div className="bg-purple-500/10 border border-purple-500/20 rounded-lg p-4 mb-4"><div className="text-xs text-purple-400 mb-1">📊 АНАЛИЗ</div><div className="text-sm text-gray-300 whitespace-pre-line">{analysis.aiText}</div></div>

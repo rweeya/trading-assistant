@@ -147,11 +147,20 @@ const predictPrice = (klines: number[], minutes: number): { price: number; direc
 
 const sendTelegram = async (text: string) => {
   try {
-    await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: TELEGRAM_CHAT_ID, text: text, parse_mode: 'HTML' })
+    const response = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+      method: 'POST', 
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ 
+        chat_id: TELEGRAM_CHAT_ID, 
+        text: text, 
+        parse_mode: 'HTML' 
+      })
     });
-  } catch {}
+    const data = await response.json();
+    console.log('Telegram response:', data);
+  } catch (error) {
+    console.error('Telegram send error:', error);
+  }
 };
 
 const getMarketAdvisor = async (signals: { symbol: string; action: string; probability: number }[]): Promise<string> => {
@@ -305,7 +314,15 @@ const App = () => {
     
     if (sig.action !== 'SKIP' && sig.probability >= 60) {
       const emoji = sig.action === 'LONG' ? '📈' : '📉';
-      sendTelegram(`${emoji} <b>${sig.action} ${sym}</b>\nВероятность: <b>${sig.probability}%</b>\nВход: ${price.toFixed(5)}\nTP: ${tp.toFixed(5)}\nSL: ${sl.toFixed(5)}\n⏱ Экспирация: ${expiryTime}\n\n${ai.slice(0, 200)}`);
+      const message = `${emoji} <b>${sig.action} ${sym}</b>\nВероятность: <b>${sig.probability}%</b>\nВход: ${price.toFixed(5)}\nTP: ${tp.toFixed(5)}\nSL: ${sl.toFixed(5)}\n⏱ Экспирация: ${expiryTime}`;
+      
+      await sendTelegram(message);
+      
+      if (notifyEnabled && 'Notification' in window && Notification.permission === 'granted') {
+        new Notification(`${sig.action} ${sym}`, {
+          body: `${sig.probability}% | Вход: ${price.toFixed(5)}`,
+        });
+      }
     }
     
     return { action: sig.action, probability: sig.probability, rsi, stoch: stoch.k, adx, macd: macd.histogram, tp, sl, entry: price, aiText: ai, predictions, expiryTime };
@@ -321,24 +338,66 @@ const App = () => {
   const autoScan = useCallback(async () => {
     if (autoScanning) return;
     setAutoScanning(true);
+    
     const sigs: Signal[] = [];
     const pairs = filteredPairs;
+    
     for (let i = 0; i < pairs.length; i += 3) {
-      const b = pairs.slice(i, i + 3); const res = await Promise.all(b.map(s => analyzeSymbol(s)));
-      res.forEach((r, idx) => { 
-        if (r && r.action !== 'SKIP' && r.probability >= 60) 
-          sigs.push({ symbol: b[idx], action: r.action, probability: r.probability, rsi: r.rsi, stoch: r.stoch, adx: r.adx, macd: r.macd, price: r.entry, tp: r.tp, sl: r.sl, aiReason: r.aiText, predictions: r.predictions, expiryTime: r.expiryTime }); 
+      const batch = pairs.slice(i, i + 3);
+      const results = await Promise.all(batch.map(sym => analyzeSymbol(sym)));
+      
+      results.forEach((result, idx) => { 
+        if (result && result.action !== 'SKIP' && result.probability >= 60) {
+          const symbol = batch[idx];
+          if (!sigs.find(s => s.symbol === symbol)) {
+            sigs.push({ 
+              symbol, 
+              action: result.action, 
+              probability: result.probability, 
+              rsi: result.rsi, 
+              stoch: result.stoch, 
+              adx: result.adx, 
+              macd: result.macd, 
+              price: result.entry, 
+              tp: result.tp, 
+              sl: result.sl, 
+              aiReason: result.aiText, 
+              predictions: result.predictions, 
+              expiryTime: result.expiryTime 
+            });
+          }
+        }
       });
-      setAutoSignals([...sigs].sort((a, b) => b.probability - a.probability)); await new Promise(r => setTimeout(r, 300));
+      
+      setAutoSignals([...sigs].sort((a, b) => b.probability - a.probability));
+      await new Promise(r => setTimeout(r, 300));
     }
-    setLastAutoScan(new Date().toLocaleTimeString()); setAutoScanning(false);
-    if (sigs.length > 0) { showToast(`🎯 ${sigs.length} сигналов!`); }
-    const advice = await getMarketAdvisor(sigs.slice(0, 5)); setMarketAdvice(advice);
-  }, [filteredPairs]);
+    
+    setLastAutoScan(new Date().toLocaleTimeString());
+    setAutoScanning(false);
+    
+    if (sigs.length > 0) {
+      showToast(`🎯 ${sigs.length} сигналов!`);
+    }
+    
+    const advice = await getMarketAdvisor(sigs.slice(0, 5));
+    setMarketAdvice(advice);
+  }, [filteredPairs, autoScanning]);
 
   useEffect(() => { 
-    if (mode === 'auto') { autoScan(); scanIntervalRef.current = window.setInterval(autoScan, 120000); } 
-    return () => { if (scanIntervalRef.current) { clearInterval(scanIntervalRef.current); scanIntervalRef.current = null; } }; 
+    if (mode === 'auto') { 
+      autoScan(); 
+      scanIntervalRef.current = window.setInterval(() => {
+        setAutoSignals([]);
+        autoScan(); 
+      }, 120000); 
+    } 
+    return () => { 
+      if (scanIntervalRef.current) { 
+        clearInterval(scanIntervalRef.current); 
+        scanIntervalRef.current = null; 
+      } 
+    }; 
   }, [mode, autoScan]);
 
   const showToast = (m: string) => { setToast(m); setTimeout(() => setToast(''), 3000); };
@@ -403,7 +462,6 @@ const App = () => {
       </header>
 
       <main className="relative z-10 max-w-6xl mx-auto p-4">
-        {/* Session controls */}
         <div className="flex gap-2 mb-4 flex-wrap">
           {!sessionId ? (
             <button onClick={startSession} className="px-4 py-2 bg-green-600 rounded-lg font-bold text-sm">🚀 Старт сессии</button>
@@ -416,7 +474,6 @@ const App = () => {
           )}
         </div>
 
-        {/* Manual mode */}
         {mode === 'manual' && (
           <div className="mb-6">
             <div className="flex gap-2 mb-3 relative">
@@ -491,7 +548,6 @@ const App = () => {
           </div>
         )}
 
-        {/* Auto mode */}
         {mode === 'auto' && (
           <div>
             <div className="flex justify-between items-center mb-4">
@@ -560,7 +616,6 @@ const App = () => {
           </div>
         )}
 
-        {/* PO Trade buttons */}
         {sessionId && (
           <div className={`mt-6 p-4 rounded-xl border ${darkMode ? 'bg-gray-800/50 border-purple-500/30' : 'bg-white border-purple-200'}`}>
             <h3 className="font-bold mb-3">🎯 Pocket Option WinRate</h3>
@@ -584,7 +639,6 @@ const App = () => {
           </div>
         )}
 
-        {/* Trades history */}
         {sessionId && sessionTrades.length > 0 && (
           <div className={`mt-4 p-4 rounded-xl border ${darkMode ? 'bg-gray-800/50 border-purple-500/30' : 'bg-white border-purple-200'}`}>
             <h3 className="font-bold mb-3">📊 История сделок</h3>
@@ -612,4 +666,4 @@ const App = () => {
   );
 };
 
-export default App; 
+export default App;

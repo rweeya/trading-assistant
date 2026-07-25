@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 
-const FINNHUB_KEY = 'd9hrerpr01qjmfda64ggd9hrerpr01qjmfda64h0';
 const DEEPSEEK_API_KEY = 'sk-0ea0af4af3dd4a849db43f56eb186b46';
 
 const TOP_PAIRS = [
@@ -89,18 +88,28 @@ const calcADX = (p: number[], per = 14): number => {
   return Math.round(Math.abs(smooth(pDM)-smooth(mDM))/(smooth(pDM)+smooth(mDM))*100);
 };
 
-const fetchFinnhubCandles = async (sym: string): Promise<number[]> => {
+const fetchCandles = async (sym: string): Promise<number[]> => {
   const cleanSym = sym.replace('_OTC', '');
+  
+  // Yahoo Finance для валют
   try {
-    const res = await fetch(`https://finnhub.io/api/v1/forex/candles?token=${FINNHUB_KEY}&symbol=${cleanSym}&resolution=1&count=100`);
+    const forexSym = `${cleanSym.slice(0,3)}${cleanSym.slice(3)}=X`;
+    const res = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${forexSym}?interval=1m&range=1d`);
     const data = await res.json();
-    if (data.s === 'ok' && data.c) return data.c;
+    if (data.chart?.result?.[0]?.indicators?.quote?.[0]?.close) {
+      return data.chart.result[0].indicators.quote[0].close.filter((c: number) => c !== null);
+    }
   } catch {}
+  
+  // Yahoo Finance для акций
   try {
-    const res = await fetch(`https://finnhub.io/api/v1/stock/candle?token=${FINNHUB_KEY}&symbol=${cleanSym}&resolution=1&count=100`);
+    const res = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${cleanSym}?interval=1m&range=1d`);
     const data = await res.json();
-    if (data.s === 'ok' && data.c) return data.c;
+    if (data.chart?.result?.[0]?.indicators?.quote?.[0]?.close) {
+      return data.chart.result[0].indicators.quote[0].close.filter((c: number) => c !== null);
+    }
   } catch {}
+  
   return [];
 };
 
@@ -135,20 +144,6 @@ const getDeepSeekAnalysis = async (sym: string, rsi: number, stoch: number, adx:
     const d = await res.json();
     return d.choices?.[0]?.message?.content || `${action} сигнал.`;
   } catch { return `${action} сигнал.`; }
-};
-
-const getMarketAdvisor = async (signals: { symbol: string; action: string; probability: number }[]): Promise<string> => {
-  if (signals.length === 0) return '';
-  try {
-    const summary = signals.slice(0, 5).map(s => `${s.symbol}: ${s.action} (${s.probability}%)`).join(', ');
-    const prompt = `Сигналы: ${summary}. Дай краткий совет трейдеру на русском: какие активы лучше, настрой рынка. 2-3 предложения.`;
-    const res = await fetch('https://api.deepseek.com/v1/chat/completions', {
-      method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${DEEPSEEK_API_KEY}` },
-      body: JSON.stringify({ model: 'deepseek-chat', messages: [{ role: 'user', content: prompt }], max_tokens: 100, temperature: 0.4 })
-    });
-    const d = await res.json();
-    return d.choices?.[0]?.message?.content || '';
-  } catch { return ''; }
 };
 
 const getComboSignal = (klines: number[]): { action: 'LONG' | 'SHORT' | 'SKIP'; probability: number; reasons: string[] } => {
@@ -186,6 +181,7 @@ const RUB_RATE = 90;
 const App = () => {
   const [mode, setMode] = useState<'manual' | 'auto'>('auto');
   const [symbol, setSymbol] = useState('EURUSD');
+  const [searchSymbol, setSearchSymbol] = useState('');
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [loading, setLoading] = useState(false);
   const [trades, setTrades] = useState<Trade[]>(() => { try { return JSON.parse(localStorage.getItem('trades') || '[]'); } catch { return []; } });
@@ -201,6 +197,7 @@ const App = () => {
   const [marketType, setMarketType] = useState<'ALL' | 'OTC' | 'STANDARD'>('OTC');
   const [rubRate] = useState(RUB_RATE);
   const scanIntervalRef = useRef<number | null>(null);
+  const [showDropdown, setShowDropdown] = useState(false);
 
   const sessionTrades = trades.filter(t => t.sessionId === sessionId);
   const sessionWinRate = sessionTrades.filter(t => t.exitPrice).length > 0 ? Math.round((sessionTrades.filter(t => (t.profit || 0) > 0).length / sessionTrades.filter(t => t.exitPrice).length) * 100) : 0;
@@ -212,12 +209,13 @@ const App = () => {
   const profitRub = Math.round(sessionProfit * rubRate / 100 * 100) / 100;
 
   const filteredPairs = marketType === 'ALL' ? TOP_PAIRS : marketType === 'OTC' ? TOP_PAIRS.filter(p => p.includes('_OTC')) : TOP_PAIRS.filter(p => !p.includes('_OTC'));
+  const searchResults = searchSymbol.length > 0 ? filteredPairs.filter(p => p.toUpperCase().includes(searchSymbol.toUpperCase())).slice(0, 30) : [];
 
   useEffect(() => { localStorage.setItem('trades', JSON.stringify(trades)); if (sessionId) localStorage.setItem('sessionId', sessionId); localStorage.setItem('poTrades', JSON.stringify(poTrades)); localStorage.setItem('darkMode', darkMode ? 'dark' : 'light'); }, [trades, sessionId, poTrades, darkMode]);
   useEffect(() => { if (notifyEnabled && 'Notification' in window && Notification.permission === 'default') { Notification.requestPermission(); } }, [notifyEnabled]);
 
   const analyzeSymbol = async (sym: string): Promise<Analysis | null> => {
-    const k = await fetchFinnhubCandles(sym);
+    const k = await fetchCandles(sym);
     if (k.length < 50) return null;
     const price = k[k.length - 1], rsi = calcRSI(k), stoch = calcStoch(k), macd = calcMACD(k), adx = calcADX(k);
     const sig = getComboSignal(k);
@@ -237,52 +235,19 @@ const App = () => {
     setAutoScanning(true);
     const sigs: Signal[] = [];
     const pairs = filteredPairs;
-    
     for (let i = 0; i < pairs.length; i += 3) {
-      const b = pairs.slice(i, i + 3);
-      const res = await Promise.all(b.map(s => analyzeSymbol(s)));
-      res.forEach((r, idx) => {
-        if (r && r.action !== 'SKIP') {
-          sigs.push({
-            symbol: b[idx], action: r.action, probability: r.probability,
-            rsi: r.rsi, stoch: r.stoch, adx: r.adx, macd: r.macd,
-            price: r.entry, tp: r.tp, sl: r.sl, aiReason: r.aiText,
-            predictions: r.predictions, expiryTime: r.expiryTime
-          });
-        }
-      });
-      setAutoSignals([...sigs].sort((a, b) => b.probability - a.probability));
-      await new Promise(r => setTimeout(r, 300));
+      const b = pairs.slice(i, i + 3); const res = await Promise.all(b.map(s => analyzeSymbol(s)));
+      res.forEach((r, idx) => { if (r && r.action !== 'SKIP') sigs.push({ symbol: b[idx], action: r.action, probability: r.probability, rsi: r.rsi, stoch: r.stoch, adx: r.adx, macd: r.macd, price: r.entry, tp: r.tp, sl: r.sl, aiReason: r.aiText, predictions: r.predictions, expiryTime: r.expiryTime }); });
+      setAutoSignals([...sigs].sort((a, b) => b.probability - a.probability)); await new Promise(r => setTimeout(r, 300));
     }
-    
-    setLastAutoScan(new Date().toLocaleTimeString());
-    setAutoScanning(false);
-    
-    if (sigs.length > 0) {
-      showToast(`🎯 ${sigs.length} сигналов!`);
-      if (notifyEnabled) { try { new Notification('🎯 Сканер', { body: `${sigs.length} сигналов` }); } catch {} }
-    }
-    
-    const advice = await getMarketAdvisor(sigs.slice(0, 5));
-    setMarketAdvice(advice);
+    setLastAutoScan(new Date().toLocaleTimeString()); setAutoScanning(false);
+    if (sigs.length > 0) { showToast(`🎯 ${sigs.length} сигналов!`); if (notifyEnabled) { try { new Notification('🎯 Сканер', { body: `${sigs.length} сигналов` }); } catch {} } }
+    const advice = await getMarketAdvisor(sigs.slice(0, 5)); setMarketAdvice(advice);
   }, [filteredPairs, notifyEnabled]);
 
-  // Непрерывный поиск
-  useEffect(() => {
-    if (mode === 'auto') {
-      autoScan();
-      scanIntervalRef.current = window.setInterval(autoScan, 120000);
-    }
-    return () => {
-      if (scanIntervalRef.current) {
-        clearInterval(scanIntervalRef.current);
-        scanIntervalRef.current = null;
-      }
-    };
-  }, [mode, autoScan]);
+  useEffect(() => { if (mode === 'auto') { autoScan(); scanIntervalRef.current = window.setInterval(autoScan, 120000); } return () => { if (scanIntervalRef.current) { clearInterval(scanIntervalRef.current); scanIntervalRef.current = null; } }; }, [mode, autoScan]);
 
   const showToast = (m: string) => { setToast(m); setTimeout(() => setToast(''), 3000); };
-
   const startSession = () => { const id = Date.now().toString(); setSessionId(id); localStorage.setItem('sessionId', id); showToast('🚀 Сессия!'); };
   const endSession = () => { setSessionId(null); localStorage.removeItem('sessionId'); showToast('🏁 Завершено'); };
   const openTrade = (action: 'LONG' | 'SHORT', sym: string, price: number) => {
@@ -293,18 +258,30 @@ const App = () => {
   const closeTrade = (id: string) => { setTrades(prev => prev.map(t => t.id !== id ? t : { ...t, exitPrice: 0, profit: 0 })); };
   const deleteTrade = (id: string) => { setTrades(prev => prev.filter(t => t.id !== id)); };
   const resetSession = () => { setTrades(prev => prev.filter(t => t.sessionId !== sessionId)); setSessionId(null); localStorage.removeItem('sessionId'); showToast('🔄 Сброс'); };
-
   const addPOTrade = (action: 'UP' | 'DOWN', symbol: string, result: 'win' | 'loss') => {
     setPoTrades(prev => [{ id: Date.now().toString(), symbol, action, result, time: new Date().toLocaleTimeString() }, ...prev]);
     showToast(result === 'win' ? '🟢 +' : '🔴 -');
   };
-
   const exportCSV = () => {
     const csv = ['symbol,action,entryPrice,exitPrice,profit,time', ...trades.map(t => `${t.symbol},${t.action},${t.entryPrice},${t.exitPrice || ''},${t.profit || ''},${t.time}`)].join('\n');
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
+    const blob = new Blob([csv], { type: 'text/csv' }); const url = URL.createObjectURL(blob);
     const a = document.createElement('a'); a.href = url; a.download = 'trades.csv'; a.click();
     showToast('📥 CSV скачан');
+  };
+
+  // AI советник
+  const getMarketAdvisor = async (signals: { symbol: string; action: string; probability: number }[]): Promise<string> => {
+    if (signals.length === 0) return '';
+    try {
+      const summary = signals.slice(0, 5).map(s => `${s.symbol}: ${s.action} (${s.probability}%)`).join(', ');
+      const prompt = `Сигналы: ${summary}. Дай краткий совет трейдеру на русском. 2-3 предложения.`;
+      const res = await fetch('https://api.deepseek.com/v1/chat/completions', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${DEEPSEEK_API_KEY}` },
+        body: JSON.stringify({ model: 'deepseek-chat', messages: [{ role: 'user', content: prompt }], max_tokens: 100, temperature: 0.4 })
+      });
+      const d = await res.json();
+      return d.choices?.[0]?.message?.content || '';
+    } catch { return ''; }
   };
 
   return (
@@ -345,17 +322,30 @@ const App = () => {
           <a href="https://pocketoption.com" target="_blank" className="px-4 py-2.5 bg-yellow-600 rounded-xl font-bold text-sm">🎯 PO</a>
           <div className="flex-1" />
           <div className={`text-xs px-3 py-2 rounded-lg max-w-md ${darkMode ? 'bg-purple-500/10 border border-purple-500/20 text-purple-300' : 'bg-purple-100 border border-purple-200 text-purple-700'}`}>
-            {marketAdvice || '🤖 AI-советник: нажмите "Обновить"'}
+            {marketAdvice || '🤖 AI-советник'}
           </div>
         </div>
 
         {mode === 'manual' && (
           <div className={`rounded-xl p-6 border border-purple-500/20 mb-6 ${darkMode ? 'bg-black/40' : 'bg-white/80'}`}>
             <div className="flex gap-3 mb-4">
-              <select value={symbol} onChange={e => setSymbol(e.target.value)} className={`border border-purple-500/30 rounded-lg px-4 py-3 text-lg flex-1 ${darkMode ? 'bg-black/60 text-white' : 'bg-white text-black'}`}>
-                <optgroup label="Валюты">{filteredPairs.filter(p => p.length === 6 || p.includes('_OTC')).slice(0, 50).map(p => <option key={p} value={p}>{p}</option>)}</optgroup>
-                <optgroup label="Акции">{filteredPairs.filter(p => p.length <= 5).map(p => <option key={p} value={p}>{p}</option>)}</optgroup>
-              </select>
+              <div className="relative flex-1">
+                <input
+                  value={searchSymbol}
+                  onChange={e => { setSearchSymbol(e.target.value); setShowDropdown(true); }}
+                  onFocus={() => setShowDropdown(true)}
+                  onBlur={() => setTimeout(() => setShowDropdown(false), 200)}
+                  placeholder="Введите актив (EURUSD, AAPL, GBPUSD_OTC...)"
+                  className={`w-full border border-purple-500/30 rounded-lg px-4 py-3 text-lg ${darkMode ? 'bg-black/60 text-white' : 'bg-white text-black'}`}
+                />
+                {showDropdown && searchResults.length > 0 && (
+                  <div className={`absolute top-full left-0 right-0 border border-purple-500/30 rounded-lg mt-1 max-h-60 overflow-y-auto z-20 ${darkMode ? 'bg-black/90' : 'bg-white'}`}>
+                    {searchResults.map(p => (
+                      <div key={p} onClick={() => { setSymbol(p); setSearchSymbol(p); setShowDropdown(false); }} className={`px-4 py-2 cursor-pointer hover:bg-purple-500/20 text-sm ${symbol === p ? 'bg-purple-500/30' : ''}`}>{p}</div>
+                    ))}
+                  </div>
+                )}
+              </div>
               <button onClick={analyze} disabled={loading} className={`px-8 py-3 rounded-xl font-bold text-lg ${loading ? 'bg-gray-700 animate-pulse' : 'bg-gradient-to-r from-purple-600 to-cyan-600'}`}>{loading ? '⏳' : '🔍'}</button>
             </div>
             {analysis && (

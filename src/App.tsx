@@ -1,10 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 
 const FINNHUB_KEY = 'd9hrerpr01qjmfda64ggd9hrerpr01qjmfda64h0';
 const DEEPSEEK_API_KEY = 'sk-0ea0af4af3dd4a849db43f56eb186b46';
 
 const TOP_PAIRS = [
-  // Валютные пары
   'AUDNZD', 'AUDUSD', 'EURGBP', 'EURHUF', 'EURJPY', 'EURNZD', 'EURRUB', 'EURTRY',
   'GBPUSD', 'USDJPY', 'USDCAD', 'USDCHF', 'EURAUD', 'GBPJPY', 'EURUSD', 'EURCAD',
   'USDMXN', 'AUDJPY', 'AUDCAD', 'CADCHF', 'CHFJPY', 'NZDUSD', 'NZDJPY',
@@ -12,11 +11,8 @@ const TOP_PAIRS = [
   'USDIDR', 'USDINR', 'USDPHP', 'USDTHB', 'USDSGD', 'USDHKD',
   'JODCNY', 'MADUSD', 'OMRCNY', 'SARCNY', 'TNDUSD',
   'USDARS', 'USDBDT', 'USDBRL', 'USDCOP', 'USDPKR',
-  'USDVND', 'YERUSD', 'ZARUSD', 'USDSGD', 'CHFNOK',
-  'USDINR', 'QARCNY', 'USDCLP', 'KESUSD', 'USDPHP',
-  'BHDCNY', 'LBPUSD', 'NGNUSD', 'UAHUSD', 'USDDZD',
-  'USDEGP',
-  // Акции
+  'USDVND', 'YERUSD', 'ZARUSD', 'CHFNOK', 'QARCNY', 'USDCLP', 'KESUSD',
+  'BHDCNY', 'LBPUSD', 'NGNUSD', 'UAHUSD', 'USDDZD', 'USDEGP',
   'AAPL', 'CSCO', 'INTC', 'MSFT', 'PFE', 'TSLA', 'XOM', 'AMZN', 'NFLX', 'V',
   'PLTR', 'COIN', 'GME', 'AMD', 'BA', 'AXP', 'VIX', 'FDX', 'C', 'META',
   'MARA', 'JNJ', 'JPM', 'MCD', 'BABA', 'DIS', 'ADBE', 'CRM', 'NVDA', 'GOOGL',
@@ -102,6 +98,52 @@ const predictPrice = (klines: number[], minutes: number): { price: number; direc
   return { price: price * (1 + final / 100), direction: final > 0 ? 'up' : 'down' };
 };
 
+const getDeepSeekAnalysis = async (sym: string, rsi: number, stoch: number, adx: number, macd: any, action: string, price: number, klines: number[]): Promise<string> => {
+  try {
+    const h = Math.max(...klines.slice(-20)), l = Math.min(...klines.slice(-20));
+    const support = l * 0.995, resistance = h * 1.005;
+    const ema50 = calcEMA(klines, 50);
+    const trend = price > ema50 ? 'бычий' : 'медвежий';
+    const rsiText = rsi < 30 ? 'перепродан' : rsi > 70 ? 'перекуплен' : 'нейтральный';
+    const stochText = stoch < 20 ? 'перепродан' : stoch > 80 ? 'перекуплен' : 'нейтральный';
+    const crossText = macd.crossed === 'up' ? 'линии MACD пересеклись вверх' : macd.crossed === 'down' ? 'линии MACD пересеклись вниз' : 'линии MACD без пересечения';
+
+    const prompt = `Ты профессиональный трейдер. Дай развёрнутый анализ для ${sym} на русском языке (4-6 предложений):
+
+- Текущая цена: ${price}
+- RSI: ${rsi} (${rsiText})
+- Stochastic: ${stoch} (${stochText})
+- ADX: ${adx} (${adx > 25 ? 'сильный тренд' : 'слабый тренд'})
+- MACD: ${crossText}, гистограмма: ${macd.histogram}
+- Тренд: ${trend} (цена ${price > ema50 ? 'выше' : 'ниже'} EMA50)
+- Поддержка: $${support.toFixed(5)}, Сопротивление: $${resistance.toFixed(5)}
+- Сигнал: ${action}
+
+Объясни почему этот сигнал появился, какие факторы его подтверждают, какие риски. Дай рекомендацию по входу с целью и стопом. Пиши на русском, развёрнуто, но без воды.`;
+
+    const res = await fetch('https://api.deepseek.com/v1/chat/completions', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${DEEPSEEK_API_KEY}` },
+      body: JSON.stringify({ model: 'deepseek-chat', messages: [{ role: 'user', content: prompt }], max_tokens: 250, temperature: 0.4 })
+    });
+    const d = await res.json();
+    return d.choices?.[0]?.message?.content || `${action} сигнал.`;
+  } catch { return `${action} сигнал.`; }
+};
+
+const getMarketAdvisor = async (signals: { symbol: string; action: string; probability: number }[]): Promise<string> => {
+  if (signals.length === 0) return '';
+  try {
+    const summary = signals.map(s => `${s.symbol}: ${s.action} (${s.probability}%)`).join(', ');
+    const prompt = `На основе сигналов сканера: ${summary}. Дай краткий совет трейдеру на русском: на что обратить внимание, какие активы лучше торговать, какой настрой рынка. 2-3 предложения.`;
+    const res = await fetch('https://api.deepseek.com/v1/chat/completions', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${DEEPSEEK_API_KEY}` },
+      body: JSON.stringify({ model: 'deepseek-chat', messages: [{ role: 'user', content: prompt }], max_tokens: 100, temperature: 0.4 })
+    });
+    const d = await res.json();
+    return d.choices?.[0]?.message?.content || '';
+  } catch { return ''; }
+};
+
 const getComboSignal = (klines: number[]): { action: 'LONG' | 'SHORT' | 'SKIP'; probability: number; reasons: string[] } => {
   const price = klines[klines.length - 1];
   const rsi = calcRSI(klines), stoch = calcStoch(klines), macd = calcMACD(klines), adx = calcADX(klines);
@@ -123,9 +165,8 @@ const getComboSignal = (klines: number[]): { action: 'LONG' | 'SHORT' | 'SKIP'; 
   if (macd.crossed === 'up') longBonus += 20; if (macd.crossed === 'down') shortBonus += 20;
   if (adx > 30) { longBonus += 10; shortBonus += 10; }
 
-  let probability = 50;
-  if (longLevel1 && longConfirms >= 2) { probability = 60 + longConfirms * 5 + longBonus / 3; reasons.push(`RSI=${rsi}`, `Stoch=${stoch.k}`, `ADX=${adx}`); return { action: 'LONG', probability: Math.min(95, Math.round(probability)), reasons }; }
-  if (shortLevel1 && shortConfirms >= 2) { probability = 60 + shortConfirms * 5 + shortBonus / 3; reasons.push(`RSI=${rsi}`, `Stoch=${stoch.k}`, `ADX=${adx}`); return { action: 'SHORT', probability: Math.min(95, Math.round(probability)), reasons }; }
+  if (longLevel1 && longConfirms >= 2) return { action: 'LONG', probability: Math.min(95, 60 + longConfirms * 5 + Math.round(longBonus / 3)), reasons };
+  if (shortLevel1 && shortConfirms >= 2) return { action: 'SHORT', probability: Math.min(95, 60 + shortConfirms * 5 + Math.round(shortBonus / 3)), reasons };
   return { action: 'SKIP', probability: 0, reasons: [] };
 };
 
@@ -134,10 +175,11 @@ interface Analysis { action: 'LONG' | 'SHORT' | 'SKIP'; probability: number; rsi
 interface Trade { id: string; symbol: string; action: 'LONG' | 'SHORT'; entryPrice: number; exitPrice: number | null; profit: number | null; time: string; sessionId: string; }
 interface POTrade { id: string; symbol: string; action: 'UP' | 'DOWN'; result: 'win' | 'loss' | null; time: string; }
 
+const RUB_RATE = 90;
+
 const App = () => {
   const [mode, setMode] = useState<'manual' | 'auto'>('auto');
   const [symbol, setSymbol] = useState('EURUSD');
-  const [searchSymbol, setSearchSymbol] = useState('');
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [loading, setLoading] = useState(false);
   const [trades, setTrades] = useState<Trade[]>(() => { try { return JSON.parse(localStorage.getItem('trades') || '[]'); } catch { return []; } });
@@ -147,6 +189,10 @@ const App = () => {
   const [lastAutoScan, setLastAutoScan] = useState('');
   const [toast, setToast] = useState('');
   const [poTrades, setPoTrades] = useState<POTrade[]>(() => { try { return JSON.parse(localStorage.getItem('poTrades') || '[]'); } catch { return []; } });
+  const [darkMode, setDarkMode] = useState(() => localStorage.getItem('darkMode') !== 'light');
+  const [marketAdvice, setMarketAdvice] = useState('');
+  const [notifyEnabled, setNotifyEnabled] = useState(false);
+  const [rubRate, setRubRate] = useState(RUB_RATE);
 
   const sessionTrades = trades.filter(t => t.sessionId === sessionId);
   const sessionWinRate = sessionTrades.filter(t => t.exitPrice).length > 0 ? Math.round((sessionTrades.filter(t => (t.profit || 0) > 0).length / sessionTrades.filter(t => t.exitPrice).length) * 100) : 0;
@@ -155,8 +201,10 @@ const App = () => {
   const poTotal = poTrades.filter(t => t.result).length;
   const poWins = poTrades.filter(t => t.result === 'win').length;
   const poWinRate = poTotal > 0 ? Math.round((poWins / poTotal) * 100) : 0;
+  const profitRub = Math.round(sessionProfit * rubRate / 100 * 100) / 100;
 
-  useEffect(() => { localStorage.setItem('trades', JSON.stringify(trades)); if (sessionId) localStorage.setItem('sessionId', sessionId); localStorage.setItem('poTrades', JSON.stringify(poTrades)); }, [trades, sessionId, poTrades]);
+  useEffect(() => { localStorage.setItem('trades', JSON.stringify(trades)); if (sessionId) localStorage.setItem('sessionId', sessionId); localStorage.setItem('poTrades', JSON.stringify(poTrades)); localStorage.setItem('darkMode', darkMode ? 'dark' : 'light'); }, [trades, sessionId, poTrades, darkMode]);
+  useEffect(() => { if (notifyEnabled && 'Notification' in window && Notification.permission === 'default') { Notification.requestPermission(); } }, [notifyEnabled]);
 
   const analyzeSymbol = async (sym: string): Promise<Analysis | null> => {
     const k = await fetchFinnhubCandles(sym);
@@ -166,15 +214,13 @@ const App = () => {
     const tp = sig.action === 'LONG' ? price * 1.01 : price * 0.99;
     const sl = sig.action === 'LONG' ? price * 0.997 : price * 1.003;
     const expiryTime = getExpiryTime();
-    const predictions = [5, 10, 15].map(min => {
-      const pred = predictPrice(k, min);
-      return { min, price: pred.price, direction: pred.direction };
-    });
-    let ai = sig.action === 'SKIP' ? 'Нет сигнала.' : `${sig.action} (${sig.probability}%). ${sig.reasons.join('. ')}.`;
+    const predictions = [5, 10, 15].map(min => ({ min, ...predictPrice(k, min) }));
+    let ai = sig.action === 'SKIP' ? 'Нет сигнала.' : `${sig.action} (${sig.probability}%).`;
+    if (sig.action !== 'SKIP') ai = await getDeepSeekAnalysis(sym, rsi, stoch.k, adx, macd, sig.action, price, k);
     return { action: sig.action, probability: sig.probability, rsi, stoch: stoch.k, adx, macd: macd.histogram, tp, sl, entry: price, aiText: ai, predictions, expiryTime };
   };
 
-  const analyze = async () => { setLoading(true); const r = await analyzeSymbol(symbol); if (r) setAnalysis(r); setLoading(false); };
+  const analyze = async () => { setLoading(true); const r = await analyzeSymbol(symbol); if (r) { setAnalysis(r); if (r.action !== 'SKIP' && notifyEnabled) { try { new Notification(`🤖 ${r.action} ${symbol}`, { body: `${r.probability}% | Вход: ${formatPrice(r.entry)}` }); } catch {} } } setLoading(false); };
 
   const autoScan = async () => {
     setAutoScanning(true); const sigs: Signal[] = [];
@@ -184,7 +230,12 @@ const App = () => {
       setAutoSignals([...sigs].sort((a, b) => b.probability - a.probability)); await new Promise(r => setTimeout(r, 500));
     }
     setLastAutoScan(new Date().toLocaleTimeString()); setAutoScanning(false);
-    if (sigs.length > 0) showToast(`🎯 ${sigs.length} сигналов!`);
+    if (sigs.length > 0) {
+      showToast(`🎯 ${sigs.length} сигналов!`);
+      if (notifyEnabled) { try { new Notification('🎯 Сканер', { body: `Найдено ${sigs.length} сигналов` }); } catch {} }
+    }
+    const advice = await getMarketAdvisor(sigs.slice(0, 5));
+    setMarketAdvice(advice);
   };
   const showToast = (m: string) => { setToast(m); setTimeout(() => setToast(''), 3000); };
   useEffect(() => { if (mode === 'auto') { autoScan(); const i = setInterval(autoScan, 180000); return () => clearInterval(i); } }, [mode]);
@@ -196,7 +247,7 @@ const App = () => {
     setTrades(prev => [{ id: Date.now().toString(), symbol: sym, action, entryPrice: price, exitPrice: null, profit: null, time: new Date().toLocaleTimeString(), sessionId }, ...prev]);
     window.open('https://pocketoption.com', '_blank');
   };
-  const closeTrade = (id: string) => { setTrades(prev => prev.map(t => { if (t.id !== id) return t; return { ...t, exitPrice: 0, profit: 0 }; })); };
+  const closeTrade = (id: string) => { setTrades(prev => prev.map(t => t.id !== id ? t : { ...t, exitPrice: 0, profit: 0 })); };
   const deleteTrade = (id: string) => { setTrades(prev => prev.filter(t => t.id !== id)); };
   const resetSession = () => { setTrades(prev => prev.filter(t => t.sessionId !== sessionId)); setSessionId(null); localStorage.removeItem('sessionId'); showToast('🔄 Сброс'); };
 
@@ -205,18 +256,37 @@ const App = () => {
     showToast(result === 'win' ? '🟢 +' : '🔴 -');
   };
 
+  const exportCSV = () => {
+    const csv = ['symbol,action,entryPrice,exitPrice,profit,time', ...trades.map(t => `${t.symbol},${t.action},${t.entryPrice},${t.exitPrice || ''},${t.profit || ''},${t.time}`)].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = 'trades.csv'; a.click();
+    showToast('📥 CSV скачан');
+  };
+
   return (
-    <div className="min-h-screen bg-black text-white">
-      {toast && <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 bg-purple-600 px-6 py-3 rounded-xl font-bold animate-pulse text-sm">{toast}</div>}
+    <div className={`min-h-screen ${darkMode ? 'bg-black text-white' : 'bg-gray-100 text-black'}`}>
+      {toast && <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 bg-purple-600 px-6 py-3 rounded-xl font-bold animate-pulse text-sm shadow-lg">{toast}</div>}
       <div className="fixed inset-0 pointer-events-none z-0">{Array.from({ length: 20 }).map((_, i) => <div key={i} className="absolute w-0.5 h-0.5 bg-purple-400 rounded-full animate-pulse" style={{ left: `${Math.random()*100}%`, top: `${Math.random()*100}%`, animationDuration: `${3+Math.random()*4}s`, opacity: 0.06+Math.random()*0.12 }} />)}</div>
 
-      <header className="relative z-10 border-b border-purple-500/20 bg-black/90 backdrop-blur p-4">
+      <header className={`relative z-10 border-b border-purple-500/20 backdrop-blur p-4 ${darkMode ? 'bg-black/90' : 'bg-white/90'}`}>
         <div className="max-w-6xl mx-auto flex justify-between items-center flex-wrap gap-4">
-          <div className="flex items-center gap-4"><h1 className="text-xl font-bold bg-gradient-to-r from-purple-400 to-cyan-400 bg-clip-text text-transparent">🤖 AI SIGNAL SCANNER</h1><div className="flex gap-1 bg-black/40 rounded-lg p-1"><button onClick={() => setMode('manual')} className={`px-3 py-1.5 rounded text-xs font-bold ${mode === 'manual' ? 'bg-purple-600 text-white' : 'text-gray-400'}`}>🔍</button><button onClick={() => setMode('auto')} className={`px-3 py-1.5 rounded text-xs font-bold ${mode === 'auto' ? 'bg-purple-600 text-white' : 'text-gray-400'}`}>🤖</button></div></div>
+          <div className="flex items-center gap-4">
+            <h1 className="text-xl font-bold bg-gradient-to-r from-purple-400 to-cyan-400 bg-clip-text text-transparent">🤖 AI SIGNAL SCANNER</h1>
+            <div className="flex gap-1 bg-black/40 rounded-lg p-1">
+              <button onClick={() => setMode('manual')} className={`px-3 py-1.5 rounded text-xs font-bold ${mode === 'manual' ? 'bg-purple-600 text-white' : 'text-gray-400'}`}>🔍</button>
+              <button onClick={() => setMode('auto')} className={`px-3 py-1.5 rounded text-xs font-bold ${mode === 'auto' ? 'bg-purple-600 text-white' : 'text-gray-400'}`}>🤖</button>
+            </div>
+            <button onClick={() => setNotifyEnabled(!notifyEnabled)} className={`text-xs ${notifyEnabled ? 'text-green-400' : 'text-gray-500'}`}>{notifyEnabled ? '🔔' : '🔕'}</button>
+            <button onClick={() => setDarkMode(!darkMode)} className={`text-xs px-2 py-1 rounded ${darkMode ? 'bg-gray-700 text-yellow-400' : 'bg-gray-300 text-gray-700'}`}>{darkMode ? '☀️' : '🌙'}</button>
+          </div>
           <div className="flex gap-4 text-sm items-center">
             <div className="text-right"><div className="text-gray-500">WR</div><div className="font-bold text-green-400">{sessionWinRate}%</div></div>
             <div className="text-right"><div className="text-gray-500">PO</div><div className={`font-bold ${poWinRate >= 50 ? 'text-green-400' : 'text-red-400'}`}>{poWinRate}%</div></div>
+            <div className="text-right"><div className="text-gray-500">Прибыль</div><div className={`font-bold text-lg ${sessionProfit >= 0 ? 'text-green-400' : 'text-red-400'}`}>{sessionProfit >= 0 ? '+' : ''}{sessionProfit}%</div></div>
+            <div className="text-right"><div className="text-gray-500">₽</div><div className={`font-bold ${profitRub >= 0 ? 'text-green-400' : 'text-red-400'}`}>{profitRub >= 0 ? '+' : ''}{profitRub} ₽</div></div>
             <button onClick={resetSession} className="px-3 py-1.5 bg-gray-700 rounded text-xs">🔄</button>
+            <button onClick={exportCSV} className="px-3 py-1.5 bg-blue-600 rounded text-xs">📥 CSV</button>
           </div>
         </div>
       </header>
@@ -225,18 +295,18 @@ const App = () => {
         <div className="flex gap-3 mb-6">
           {!sessionId ? <button onClick={startSession} className="px-6 py-2.5 bg-green-600 rounded-xl font-bold text-sm animate-pulse">▶ Сессия</button> : <button onClick={endSession} className="px-6 py-2.5 bg-red-600 rounded-xl font-bold text-sm">⏹</button>}
           <a href="https://pocketoption.com" target="_blank" className="px-4 py-2.5 bg-yellow-600 rounded-xl font-bold text-sm">🎯 PO</a>
+          <div className="flex-1" />
+          <div className={`text-xs px-3 py-2 rounded-lg max-w-md ${darkMode ? 'bg-purple-500/10 border border-purple-500/20 text-purple-300' : 'bg-purple-100 border border-purple-200 text-purple-700'}`}>
+            {marketAdvice || '🤖 AI-советник: нажмите "Обновить" для анализа рынка'}
+          </div>
         </div>
 
         {mode === 'manual' && (
-          <div className="bg-black/40 rounded-xl p-6 border border-purple-500/20 mb-6">
+          <div className={`rounded-xl p-6 border border-purple-500/20 mb-6 ${darkMode ? 'bg-black/40' : 'bg-white/80'}`}>
             <div className="flex gap-3 mb-4">
-              <select value={symbol} onChange={e => setSymbol(e.target.value)} className="bg-black/60 border border-purple-500/30 rounded-lg px-4 py-3 text-white text-lg flex-1">
-                <optgroup label="Валюты">
-                  {TOP_PAIRS.filter(p => p.length === 6).map(p => <option key={p} value={p}>{p}</option>)}
-                </optgroup>
-                <optgroup label="Акции">
-                  {TOP_PAIRS.filter(p => p.length <= 5).map(p => <option key={p} value={p}>{p}</option>)}
-                </optgroup>
+              <select value={symbol} onChange={e => setSymbol(e.target.value)} className={`border border-purple-500/30 rounded-lg px-4 py-3 text-lg flex-1 ${darkMode ? 'bg-black/60 text-white' : 'bg-white text-black'}`}>
+                <optgroup label="Валюты">{TOP_PAIRS.filter(p => p.length === 6).map(p => <option key={p} value={p}>{p}</option>)}</optgroup>
+                <optgroup label="Акции">{TOP_PAIRS.filter(p => p.length <= 5).map(p => <option key={p} value={p}>{p}</option>)}</optgroup>
               </select>
               <button onClick={analyze} disabled={loading} className={`px-8 py-3 rounded-xl font-bold text-lg ${loading ? 'bg-gray-700 animate-pulse' : 'bg-gradient-to-r from-purple-600 to-cyan-600'}`}>{loading ? '⏳' : '🔍'}</button>
             </div>
@@ -245,6 +315,7 @@ const App = () => {
                 <div className="flex justify-between items-center mb-4"><div><span className="text-3xl font-bold">{analysis.action === 'LONG' ? '📈 ВВЕРХ' : '📉 ВНИЗ'}</span><span className="ml-3 text-lg text-gray-400">{symbol}</span></div><div className="text-right"><div className={`text-3xl font-bold ${analysis.probability >= 75 ? 'text-green-400' : analysis.probability >= 65 ? 'text-yellow-400' : 'text-gray-400'}`}>{analysis.probability}%</div><div className={`text-xs font-bold mt-1 ${analysis.probability >= 75 ? 'text-green-400' : analysis.probability >= 65 ? 'text-yellow-400' : 'text-gray-400'}`}>{analysis.probability >= 75 ? '🔥 БЕРИ!' : analysis.probability >= 65 ? '👍 Можно' : '👀 Риск'}</div></div></div>
                 <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-3 mb-4 text-center"><div className="text-xs text-yellow-400">⏱ ЭКСПИРАЦИЯ (5 мин)</div><div className="text-2xl font-bold text-yellow-400">{analysis.expiryTime}</div></div>
                 <div className="grid grid-cols-3 gap-2 mb-4">{analysis.predictions.map(p => <div key={p.min} className={`bg-black/40 rounded-lg p-3 text-center border ${p.direction === 'up' ? 'border-green-500/30' : 'border-red-500/30'}`}><div className="text-xs text-gray-500">{p.min}м</div><div className={`text-lg font-bold ${p.direction === 'up' ? 'text-green-400' : 'text-red-400'}`}>{p.price.toFixed(5)}</div></div>)}</div>
+                <div className="bg-purple-500/10 border border-purple-500/20 rounded-lg p-4 mb-4"><div className="text-xs text-purple-400 mb-1">🤖 DeepSeek AI — развёрнутый анализ</div><div className="text-sm text-gray-300 whitespace-pre-line">{analysis.aiText}</div></div>
                 <div className="grid grid-cols-4 gap-2 text-xs mb-4"><div className="bg-black/30 rounded p-2 text-center"><div className="text-gray-500">RSI</div><div className={analysis.rsi < 30 ? 'text-green-400' : analysis.rsi > 70 ? 'text-red-400' : 'text-white'}>{analysis.rsi}</div></div><div className="bg-black/30 rounded p-2 text-center"><div className="text-gray-500">STOCH</div><div className={analysis.stoch < 20 ? 'text-green-400' : analysis.stoch > 80 ? 'text-red-400' : 'text-white'}>{analysis.stoch}</div></div><div className="bg-black/30 rounded p-2 text-center"><div className="text-gray-500">ADX</div><div className="text-white">{analysis.adx}</div></div><div className="bg-black/30 rounded p-2 text-center"><div className="text-gray-500">MACD</div><div className={analysis.macd > 0 ? 'text-green-400' : 'text-red-400'}>{analysis.macd.toFixed(5)}</div></div></div>
                 <div className="flex gap-3"><button onClick={() => openTrade('LONG', symbol, analysis.entry)} className={`flex-1 py-3 rounded-xl font-bold text-lg ${analysis.action === 'LONG' ? 'bg-green-600 animate-pulse' : 'bg-gray-700'}`}>🟢 ВВЕРХ</button><button onClick={() => openTrade('SHORT', symbol, analysis.entry)} className={`flex-1 py-3 rounded-xl font-bold text-lg ${analysis.action === 'SHORT' ? 'bg-red-600 animate-pulse' : 'bg-gray-700'}`}>🔴 ВНИЗ</button></div>
                 <div className="flex gap-2 mt-3"><button onClick={() => addPOTrade(analysis.action === 'LONG' ? 'UP' : 'DOWN', symbol, 'win')} className="flex-1 py-2 bg-green-600/50 rounded-lg text-xs font-bold">✅ Выиграл</button><button onClick={() => addPOTrade(analysis.action === 'LONG' ? 'UP' : 'DOWN', symbol, 'loss')} className="flex-1 py-2 bg-red-600/50 rounded-lg text-xs font-bold">❌ Проиграл</button></div>
@@ -254,13 +325,14 @@ const App = () => {
         )}
 
         {mode === 'auto' && (
-          <div className="bg-black/40 rounded-xl p-6 border border-purple-500/20 mb-6">
+          <div className={`rounded-xl p-6 border border-purple-500/20 mb-6 ${darkMode ? 'bg-black/40' : 'bg-white/80'}`}>
             <div className="flex justify-between items-center mb-4"><div><h2 className="text-lg font-bold text-purple-300">🤖 АВТО-ПОИСК ({TOP_PAIRS.length} активов)</h2><p className="text-xs text-gray-500">{lastAutoScan || 'Нажми обновить'}</p></div><button onClick={autoScan} disabled={autoScanning} className={`px-4 py-2 rounded-lg text-sm font-bold ${autoScanning ? 'bg-gray-700' : 'bg-purple-600'}`}>{autoScanning ? '⏳' : '🔄'}</button></div>
             <div className="space-y-3">
               {autoSignals.map((s, i) => (
                 <div key={i} className={`rounded-xl border ${s.action === 'LONG' ? 'bg-green-500/5 border-green-500/30' : 'bg-red-500/5 border-red-500/30'}`}>
                   <div className="p-4"><div className="flex justify-between items-center mb-3"><div><span className="font-bold text-lg">{s.symbol}</span><span className={`ml-2 px-2 py-0.5 rounded text-xs font-bold ${s.action === 'LONG' ? 'bg-green-600' : 'bg-red-600'}`}>{s.action === 'LONG' ? '📈 ВВЕРХ' : '📉 ВНИЗ'}</span></div><div className="flex items-center gap-3"><div className={`text-lg font-bold ${s.probability >= 75 ? 'text-green-400' : 'text-yellow-400'}`}>{s.probability}%</div><span className="text-yellow-400 font-bold text-sm">⏱ {s.expiryTime}</span><button onClick={() => openTrade(s.action, s.symbol, s.price)} className={`px-4 py-2 rounded-lg text-sm font-bold ${s.action === 'LONG' ? 'bg-green-600' : 'bg-red-600'}`}>{s.action === 'LONG' ? 'ВВЕРХ' : 'ВНИЗ'}</button></div></div>
                     <div className="grid grid-cols-3 gap-2 mb-3 text-xs">{s.predictions.map(p => <div key={p.min} className={`bg-black/30 rounded p-2 text-center border ${p.direction === 'up' ? 'border-green-500/20' : 'border-red-500/20'}`}><div className="text-gray-500">{p.min}м</div><div className={`font-bold ${p.direction === 'up' ? 'text-green-400' : 'text-red-400'}`}>{p.price.toFixed(5)}</div></div>)}</div>
+                    <div className="bg-purple-500/10 border border-purple-500/20 rounded-lg p-3"><div className="text-xs text-gray-300">{s.aiReason?.slice(0, 200)}</div></div>
                   </div>
                 </div>
               ))}
@@ -268,7 +340,7 @@ const App = () => {
           </div>
         )}
 
-        <div className="bg-black/40 rounded-xl border border-purple-500/20 overflow-hidden mb-6">
+        <div className={`rounded-xl border border-purple-500/20 overflow-hidden mb-6 ${darkMode ? 'bg-black/40' : 'bg-white/80'}`}>
           <div className="p-3 bg-purple-950/20 border-b border-purple-500/20 text-sm font-bold text-purple-300">📊 POCKET OPTION | <span className={poWinRate >= 50 ? 'text-green-400' : 'text-red-400'}>WR: {poWinRate}% ({poWins}/{poTotal})</span></div>
           <div className="divide-y divide-gray-800 max-h-40 overflow-y-auto">
             {poTrades.length === 0 ? <div className="p-4 text-center text-gray-500 text-sm">Нет записей</div> : poTrades.map(t => (

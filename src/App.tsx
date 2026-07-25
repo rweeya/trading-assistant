@@ -3,7 +3,6 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 const DEEPSEEK_API_KEY = 'sk-0ea0af4af3dd4a849db43f56eb186b46';
 
 const TOP_PAIRS = [
-  // Стандартные валюты
   'AUDNZD', 'AUDUSD', 'EURGBP', 'EURHUF', 'EURJPY', 'EURNZD', 'EURRUB', 'EURTRY',
   'GBPUSD', 'USDJPY', 'USDCAD', 'USDCHF', 'EURAUD', 'GBPJPY', 'EURUSD', 'EURCAD',
   'USDMXN', 'AUDJPY', 'AUDCAD', 'CADCHF', 'CHFJPY', 'NZDUSD', 'NZDJPY',
@@ -13,7 +12,6 @@ const TOP_PAIRS = [
   'USDARS', 'USDBDT', 'USDBRL', 'USDCOP', 'USDPKR',
   'USDVND', 'YERUSD', 'ZARUSD', 'CHFNOK', 'QARCNY', 'USDCLP', 'KESUSD',
   'BHDCNY', 'LBPUSD', 'NGNUSD', 'UAHUSD', 'USDDZD', 'USDEGP',
-  // OTC Валюты
   'AEDCNY_OTC', 'AUDCAD_OTC', 'AUDCHF_OTC', 'AUDUSD_OTC',
   'CADCHF_OTC', 'CADJPY_OTC', 'CHFJPY_OTC', 'CHFNOK_OTC',
   'EURCHF_OTC', 'EURTRY_OTC', 'EURUSD_OTC',
@@ -27,18 +25,18 @@ const TOP_PAIRS = [
   'USDINR_OTC', 'ZARUSD_OTC', 'EURGBP_OTC', 'USDBRL_OTC',
   'AUDNZD_OTC', 'UAHUSD_OTC', 'USDEGP_OTC', 'USDARS_OTC',
   'KESUSD_OTC', 'USDCHF_OTC', 'LBPUSD_OTC', 'USDRUB_OTC',
-  // Акции
   'AAPL', 'CSCO', 'INTC', 'MSFT', 'PFE', 'TSLA', 'XOM', 'AMZN', 'NFLX', 'V',
   'PLTR', 'COIN', 'GME', 'AMD', 'BA', 'AXP', 'VIX', 'FDX', 'C', 'META',
   'MARA', 'JNJ', 'JPM', 'MCD', 'BABA', 'DIS', 'ADBE', 'CRM', 'NVDA', 'GOOGL',
   'WMT', 'PG', 'MA', 'UNH', 'HD',
-  // OTC Акции
   'AAPL_OTC', 'MSFT_OTC', 'TSLA_OTC', 'AMZN_OTC', 'NFLX_OTC', 'META_OTC',
   'NVDA_OTC', 'GOOGL_OTC', 'JPM_OTC', 'V_OTC', 'JNJ_OTC', 'AMD_OTC',
   'BA_OTC', 'XOM_OTC', 'PFE_OTC', 'PLTR_OTC', 'COIN_OTC', 'GME_OTC',
   'INTC_OTC', 'CSCO_OTC', 'AXP_OTC', 'FDX_OTC', 'C_OTC', 'MARA_OTC',
   'BABA_OTC', 'DIS_OTC', 'ADBE_OTC', 'CRM_OTC', 'WMT_OTC', 'MA_OTC'
 ];
+
+const CORS_PROXY = 'https://api.allorigins.win/raw?url=';
 
 const calcRSI = (p: number[], per = 14): number => {
   if (p.length < per + 1) return 50;
@@ -90,26 +88,23 @@ const calcADX = (p: number[], per = 14): number => {
 
 const fetchCandles = async (sym: string): Promise<number[]> => {
   const cleanSym = sym.replace('_OTC', '');
-  
-  // Yahoo Finance для валют
-  try {
-    const forexSym = `${cleanSym.slice(0,3)}${cleanSym.slice(3)}=X`;
-    const res = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${forexSym}?interval=1m&range=1d`);
-    const data = await res.json();
-    if (data.chart?.result?.[0]?.indicators?.quote?.[0]?.close) {
-      return data.chart.result[0].indicators.quote[0].close.filter((c: number) => c !== null);
-    }
-  } catch {}
-  
-  // Yahoo Finance для акций
-  try {
-    const res = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${cleanSym}?interval=1m&range=1d`);
-    const data = await res.json();
-    if (data.chart?.result?.[0]?.indicators?.quote?.[0]?.close) {
-      return data.chart.result[0].indicators.quote[0].close.filter((c: number) => c !== null);
-    }
-  } catch {}
-  
+  const forexSym = `${cleanSym.slice(0,3)}${cleanSym.slice(3)}=X`;
+
+  const urls = [
+    `https://query1.finance.yahoo.com/v8/finance/chart/${forexSym}?interval=1m&range=1h`,
+    `https://query1.finance.yahoo.com/v8/finance/chart/${cleanSym}?interval=1m&range=1h`,
+  ];
+
+  for (const url of urls) {
+    try {
+      const res = await fetch(CORS_PROXY + encodeURIComponent(url));
+      const data = await res.json();
+      if (data.chart?.result?.[0]?.indicators?.quote?.[0]?.close) {
+        const closes = data.chart.result[0].indicators.quote[0].close.filter((c: number) => c !== null);
+        if (closes.length >= 30) return closes;
+      }
+    } catch {}
+  }
   return [];
 };
 
@@ -144,6 +139,20 @@ const getDeepSeekAnalysis = async (sym: string, rsi: number, stoch: number, adx:
     const d = await res.json();
     return d.choices?.[0]?.message?.content || `${action} сигнал.`;
   } catch { return `${action} сигнал.`; }
+};
+
+const getMarketAdvisor = async (signals: { symbol: string; action: string; probability: number }[]): Promise<string> => {
+  if (signals.length === 0) return '';
+  try {
+    const summary = signals.slice(0, 5).map(s => `${s.symbol}: ${s.action} (${s.probability}%)`).join(', ');
+    const prompt = `Сигналы: ${summary}. Дай краткий совет трейдеру на русском. 2-3 предложения.`;
+    const res = await fetch('https://api.deepseek.com/v1/chat/completions', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${DEEPSEEK_API_KEY}` },
+      body: JSON.stringify({ model: 'deepseek-chat', messages: [{ role: 'user', content: prompt }], max_tokens: 100, temperature: 0.4 })
+    });
+    const d = await res.json();
+    return d.choices?.[0]?.message?.content || '';
+  } catch { return ''; }
 };
 
 const getComboSignal = (klines: number[]): { action: 'LONG' | 'SHORT' | 'SKIP'; probability: number; reasons: string[] } => {
@@ -216,7 +225,7 @@ const App = () => {
 
   const analyzeSymbol = async (sym: string): Promise<Analysis | null> => {
     const k = await fetchCandles(sym);
-    if (k.length < 50) return null;
+    if (k.length < 30) return null;
     const price = k[k.length - 1], rsi = calcRSI(k), stoch = calcStoch(k), macd = calcMACD(k), adx = calcADX(k);
     const sig = getComboSignal(k);
     const tp = sig.action === 'LONG' ? price * 1.01 : price * 0.99;
@@ -228,7 +237,17 @@ const App = () => {
     return { action: sig.action, probability: sig.probability, rsi, stoch: stoch.k, adx, macd: macd.histogram, tp, sl, entry: price, aiText: ai, predictions, expiryTime };
   };
 
-  const analyze = async () => { setLoading(true); const r = await analyzeSymbol(symbol); if (r) { setAnalysis(r); if (r.action !== 'SKIP' && notifyEnabled) { try { new Notification(`🤖 ${r.action} ${symbol}`, { body: `${r.probability}%` }); } catch {} } } setLoading(false); };
+  const analyze = async () => { 
+    setLoading(true); 
+    const r = await analyzeSymbol(symbol); 
+    if (r) { 
+      setAnalysis(r); 
+      if (r.action !== 'SKIP' && notifyEnabled) { 
+        try { new Notification(`🤖 ${r.action} ${symbol}`, { body: `${r.probability}%` }); } catch {} 
+      } 
+    }
+    setLoading(false); 
+  };
 
   const autoScan = useCallback(async () => {
     if (autoScanning) return;
@@ -245,7 +264,18 @@ const App = () => {
     const advice = await getMarketAdvisor(sigs.slice(0, 5)); setMarketAdvice(advice);
   }, [filteredPairs, notifyEnabled]);
 
-  useEffect(() => { if (mode === 'auto') { autoScan(); scanIntervalRef.current = window.setInterval(autoScan, 120000); } return () => { if (scanIntervalRef.current) { clearInterval(scanIntervalRef.current); scanIntervalRef.current = null; } }; }, [mode, autoScan]);
+  useEffect(() => { 
+    if (mode === 'auto') { 
+      autoScan(); 
+      scanIntervalRef.current = window.setInterval(autoScan, 120000); 
+    } 
+    return () => { 
+      if (scanIntervalRef.current) { 
+        clearInterval(scanIntervalRef.current); 
+        scanIntervalRef.current = null; 
+      } 
+    }; 
+  }, [mode, autoScan]);
 
   const showToast = (m: string) => { setToast(m); setTimeout(() => setToast(''), 3000); };
   const startSession = () => { const id = Date.now().toString(); setSessionId(id); localStorage.setItem('sessionId', id); showToast('🚀 Сессия!'); };
@@ -269,33 +299,18 @@ const App = () => {
     showToast('📥 CSV скачан');
   };
 
-  // AI советник
-  const getMarketAdvisor = async (signals: { symbol: string; action: string; probability: number }[]): Promise<string> => {
-    if (signals.length === 0) return '';
-    try {
-      const summary = signals.slice(0, 5).map(s => `${s.symbol}: ${s.action} (${s.probability}%)`).join(', ');
-      const prompt = `Сигналы: ${summary}. Дай краткий совет трейдеру на русском. 2-3 предложения.`;
-      const res = await fetch('https://api.deepseek.com/v1/chat/completions', {
-        method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${DEEPSEEK_API_KEY}` },
-        body: JSON.stringify({ model: 'deepseek-chat', messages: [{ role: 'user', content: prompt }], max_tokens: 100, temperature: 0.4 })
-      });
-      const d = await res.json();
-      return d.choices?.[0]?.message?.content || '';
-    } catch { return ''; }
-  };
-
   return (
     <div className={`min-h-screen ${darkMode ? 'bg-black text-white' : 'bg-gray-100 text-black'}`}>
       {toast && <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 bg-purple-600 px-6 py-3 rounded-xl font-bold animate-pulse text-sm shadow-lg">{toast}</div>}
-      <div className="fixed inset-0 pointer-events-none z-0">{Array.from({ length: 20 }).map((_, i) => <div key={i} className="absolute w-0.5 h-0.5 bg-purple-400 rounded-full animate-pulse" style={{ left: `${Math.random()*100}%`, top: `${Math.random()*100}%`, animationDuration: `${3+Math.random()*4}s`, opacity: 0.06+Math.random()*0.12 }} />)}</div>
+      <div className="fixed inset-0 pointer-events-none z-0">{Array.from({ length: 15 }).map((_, i) => <div key={i} className="absolute w-0.5 h-0.5 bg-purple-400 rounded-full animate-pulse" style={{ left: `${Math.random()*100}%`, top: `${Math.random()*100}%`, animationDuration: `${3+Math.random()*4}s`, opacity: 0.04+Math.random()*0.1 }} />)}</div>
 
       <header className={`relative z-10 border-b border-purple-500/20 backdrop-blur p-4 ${darkMode ? 'bg-black/90' : 'bg-white/90'}`}>
-        <div className="max-w-6xl mx-auto flex justify-between items-center flex-wrap gap-4">
-          <div className="flex items-center gap-4">
-            <h1 className="text-xl font-bold bg-gradient-to-r from-purple-400 to-cyan-400 bg-clip-text text-transparent">🤖 AI SIGNAL SCANNER</h1>
+        <div className="max-w-6xl mx-auto flex justify-between items-center flex-wrap gap-3">
+          <div className="flex items-center gap-3">
+            <h1 className="text-lg font-bold bg-gradient-to-r from-purple-400 to-cyan-400 bg-clip-text text-transparent">🤖 AI SIGNAL SCANNER</h1>
             <div className="flex gap-1 bg-black/40 rounded-lg p-1">
-              <button onClick={() => setMode('manual')} className={`px-3 py-1.5 rounded text-xs font-bold ${mode === 'manual' ? 'bg-purple-600 text-white' : 'text-gray-400'}`}>🔍</button>
-              <button onClick={() => setMode('auto')} className={`px-3 py-1.5 rounded text-xs font-bold ${mode === 'auto' ? 'bg-purple-600 text-white' : 'text-gray-400'}`}>🤖</button>
+              <button onClick={() => setMode('manual')} className={`px-2 py-1 rounded text-xs font-bold ${mode === 'manual' ? 'bg-purple-600 text-white' : 'text-gray-400'}`}>🔍</button>
+              <button onClick={() => setMode('auto')} className={`px-2 py-1 rounded text-xs font-bold ${mode === 'auto' ? 'bg-purple-600 text-white' : 'text-gray-400'}`}>🤖</button>
             </div>
             <div className="flex gap-1 bg-black/40 rounded-lg p-1">
               <button onClick={() => setMarketType('ALL')} className={`px-2 py-1 rounded text-xs ${marketType === 'ALL' ? 'bg-purple-600 text-white' : 'text-gray-400'}`}>Все</button>
@@ -305,13 +320,13 @@ const App = () => {
             <button onClick={() => setNotifyEnabled(!notifyEnabled)} className={`text-xs ${notifyEnabled ? 'text-green-400' : 'text-gray-500'}`}>{notifyEnabled ? '🔔' : '🔕'}</button>
             <button onClick={() => setDarkMode(!darkMode)} className={`text-xs px-2 py-1 rounded ${darkMode ? 'bg-gray-700 text-yellow-400' : 'bg-gray-300 text-gray-700'}`}>{darkMode ? '☀️' : '🌙'}</button>
           </div>
-          <div className="flex gap-4 text-sm items-center">
+          <div className="flex gap-3 text-sm items-center">
             <div className="text-right"><div className="text-gray-500">WR</div><div className="font-bold text-green-400">{sessionWinRate}%</div></div>
             <div className="text-right"><div className="text-gray-500">PO</div><div className={`font-bold ${poWinRate >= 50 ? 'text-green-400' : 'text-red-400'}`}>{poWinRate}%</div></div>
-            <div className="text-right"><div className="text-gray-500">Прибыль</div><div className={`font-bold text-lg ${sessionProfit >= 0 ? 'text-green-400' : 'text-red-400'}`}>{sessionProfit >= 0 ? '+' : ''}{sessionProfit}%</div></div>
+            <div className="text-right"><div className="text-gray-500">Прибыль</div><div className={`font-bold ${sessionProfit >= 0 ? 'text-green-400' : 'text-red-400'}`}>{sessionProfit >= 0 ? '+' : ''}{sessionProfit}%</div></div>
             <div className="text-right"><div className="text-gray-500">₽</div><div className={`font-bold ${profitRub >= 0 ? 'text-green-400' : 'text-red-400'}`}>{profitRub >= 0 ? '+' : ''}{profitRub} ₽</div></div>
-            <button onClick={resetSession} className="px-3 py-1.5 bg-gray-700 rounded text-xs">🔄</button>
-            <button onClick={exportCSV} className="px-3 py-1.5 bg-blue-600 rounded text-xs">📥 CSV</button>
+            <button onClick={resetSession} className="px-2 py-1 bg-gray-700 rounded text-xs">🔄</button>
+            <button onClick={exportCSV} className="px-2 py-1 bg-blue-600 rounded text-xs">📥</button>
           </div>
         </div>
       </header>
@@ -353,7 +368,7 @@ const App = () => {
                 <div className="flex justify-between items-center mb-4"><div><span className="text-3xl font-bold">{analysis.action === 'LONG' ? '📈 ВВЕРХ' : '📉 ВНИЗ'}</span><span className="ml-3 text-lg text-gray-400">{symbol}</span></div><div className="text-right"><div className={`text-3xl font-bold ${analysis.probability >= 75 ? 'text-green-400' : analysis.probability >= 65 ? 'text-yellow-400' : 'text-gray-400'}`}>{analysis.probability}%</div><div className={`text-xs font-bold mt-1 ${analysis.probability >= 75 ? 'text-green-400' : analysis.probability >= 65 ? 'text-yellow-400' : 'text-gray-400'}`}>{analysis.probability >= 75 ? '🔥 БЕРИ!' : analysis.probability >= 65 ? '👍 Можно' : '👀 Риск'}</div></div></div>
                 <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-3 mb-4 text-center"><div className="text-xs text-yellow-400">⏱ ЭКСПИРАЦИЯ (5 мин)</div><div className="text-2xl font-bold text-yellow-400">{analysis.expiryTime}</div></div>
                 <div className="grid grid-cols-3 gap-2 mb-4">{analysis.predictions.map(p => <div key={p.min} className={`bg-black/40 rounded-lg p-3 text-center border ${p.direction === 'up' ? 'border-green-500/30' : 'border-red-500/30'}`}><div className="text-xs text-gray-500">{p.min}м</div><div className={`text-lg font-bold ${p.direction === 'up' ? 'text-green-400' : 'text-red-400'}`}>{p.price.toFixed(5)}</div></div>)}</div>
-                <div className="bg-purple-500/10 border border-purple-500/20 rounded-lg p-4 mb-4"><div className="text-xs text-purple-400 mb-1">🤖 DeepSeek AI — развёрнутый анализ</div><div className="text-sm text-gray-300 whitespace-pre-line">{analysis.aiText}</div></div>
+                <div className="bg-purple-500/10 border border-purple-500/20 rounded-lg p-4 mb-4"><div className="text-xs text-purple-400 mb-1">🤖 DeepSeek AI</div><div className="text-sm text-gray-300 whitespace-pre-line">{analysis.aiText}</div></div>
                 <div className="grid grid-cols-4 gap-2 text-xs mb-4"><div className="bg-black/30 rounded p-2 text-center"><div className="text-gray-500">RSI</div><div className={analysis.rsi < 30 ? 'text-green-400' : analysis.rsi > 70 ? 'text-red-400' : 'text-white'}>{analysis.rsi}</div></div><div className="bg-black/30 rounded p-2 text-center"><div className="text-gray-500">STOCH</div><div className={analysis.stoch < 20 ? 'text-green-400' : analysis.stoch > 80 ? 'text-red-400' : 'text-white'}>{analysis.stoch}</div></div><div className="bg-black/30 rounded p-2 text-center"><div className="text-gray-500">ADX</div><div className="text-white">{analysis.adx}</div></div><div className="bg-black/30 rounded p-2 text-center"><div className="text-gray-500">MACD</div><div className={analysis.macd > 0 ? 'text-green-400' : 'text-red-400'}>{analysis.macd.toFixed(5)}</div></div></div>
                 <div className="flex gap-3"><button onClick={() => openTrade('LONG', symbol, analysis.entry)} className={`flex-1 py-3 rounded-xl font-bold text-lg ${analysis.action === 'LONG' ? 'bg-green-600 animate-pulse' : 'bg-gray-700'}`}>🟢 ВВЕРХ</button><button onClick={() => openTrade('SHORT', symbol, analysis.entry)} className={`flex-1 py-3 rounded-xl font-bold text-lg ${analysis.action === 'SHORT' ? 'bg-red-600 animate-pulse' : 'bg-gray-700'}`}>🔴 ВНИЗ</button></div>
                 <div className="flex gap-2 mt-3"><button onClick={() => addPOTrade(analysis.action === 'LONG' ? 'UP' : 'DOWN', symbol, 'win')} className="flex-1 py-2 bg-green-600/50 rounded-lg text-xs font-bold">✅ Выиграл</button><button onClick={() => addPOTrade(analysis.action === 'LONG' ? 'UP' : 'DOWN', symbol, 'loss')} className="flex-1 py-2 bg-red-600/50 rounded-lg text-xs font-bold">❌ Проиграл</button></div>
@@ -370,7 +385,7 @@ const App = () => {
                 <div key={i} className={`rounded-xl border ${s.action === 'LONG' ? 'bg-green-500/5 border-green-500/30' : 'bg-red-500/5 border-red-500/30'}`}>
                   <div className="p-4"><div className="flex justify-between items-center mb-3"><div><span className="font-bold text-lg">{s.symbol}</span><span className={`ml-2 px-2 py-0.5 rounded text-xs font-bold ${s.action === 'LONG' ? 'bg-green-600' : 'bg-red-600'}`}>{s.action === 'LONG' ? '📈 ВВЕРХ' : '📉 ВНИЗ'}</span></div><div className="flex items-center gap-3"><div className={`text-lg font-bold ${s.probability >= 75 ? 'text-green-400' : 'text-yellow-400'}`}>{s.probability}%</div><span className="text-yellow-400 font-bold text-sm">⏱ {s.expiryTime}</span><button onClick={() => openTrade(s.action, s.symbol, s.price)} className={`px-4 py-2 rounded-lg text-sm font-bold ${s.action === 'LONG' ? 'bg-green-600' : 'bg-red-600'}`}>{s.action === 'LONG' ? 'ВВЕРХ' : 'ВНИЗ'}</button></div></div>
                     <div className="grid grid-cols-3 gap-2 mb-3 text-xs">{s.predictions.map(p => <div key={p.min} className={`bg-black/30 rounded p-2 text-center border ${p.direction === 'up' ? 'border-green-500/20' : 'border-red-500/20'}`}><div className="text-gray-500">{p.min}м</div><div className={`font-bold ${p.direction === 'up' ? 'text-green-400' : 'text-red-400'}`}>{p.price.toFixed(5)}</div></div>)}</div>
-                    <div className="bg-purple-500/10 border border-purple-500/20 rounded-lg p-3"><div className="text-xs text-gray-300">{s.aiReason?.slice(0, 200)}</div></div>
+                    <div className="bg-purple-500/10 border border-purple-500/20 rounded-lg p-3"><div className="text-xs text-gray-300">{s.aiReason?.slice(0, 150)}</div></div>
                   </div>
                 </div>
               ))}

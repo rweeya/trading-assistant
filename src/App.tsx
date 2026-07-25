@@ -147,7 +147,6 @@ const getComboSignal = (klines: number[]): { action: 'LONG' | 'SHORT' | 'SKIP'; 
   const rsi = calcRSI(klines), stoch = calcStoch(klines), macd = calcMACD(klines), adx = calcADX(klines);
   const ema20 = calcEMA(klines, 20), ema50 = calcEMA(klines, 50);
   
-  // Смягчённые условия
   const longLevel1 = rsi < 45 && stoch.k < 35 && adx > 15;
   const shortLevel1 = rsi > 55 && stoch.k > 65 && adx > 15;
   
@@ -165,12 +164,8 @@ const getComboSignal = (klines: number[]): { action: 'LONG' | 'SHORT' | 'SKIP'; 
   if (macd.crossed === 'up') longBonus += 20; if (macd.crossed === 'down') shortBonus += 20;
   if (adx > 30) { longBonus += 10; shortBonus += 10; }
 
-  if (longLevel1 && longConfirms >= 2) return { action: 'LONG', probability: Math.min(95, 60 + longConfirms * 5 + Math.round(longBonus / 3)), reasons: [] };
-  if (shortLevel1 && shortConfirms >= 2) return { action: 'SHORT', probability: Math.min(95, 60 + shortConfirms * 5 + Math.round(shortBonus / 3)), reasons: [] };
-  
-  // Если уровень 1 пройден но подтверждений мало — показываем сигнал с низкой вероятностью
-  if (longLevel1) return { action: 'LONG', probability: 45, reasons: [] };
-  if (shortLevel1) return { action: 'SHORT', probability: 45, reasons: [] };
+  if (longLevel1 && longConfirms >= 2) return { action: 'LONG', probability: Math.min(95, 55 + longConfirms * 5 + Math.round(longBonus / 3)), reasons: [] };
+  if (shortLevel1 && shortConfirms >= 2) return { action: 'SHORT', probability: Math.min(95, 55 + shortConfirms * 5 + Math.round(shortBonus / 3)), reasons: [] };
   
   return { action: 'SKIP', probability: 0, reasons: [] };
 };
@@ -224,10 +219,7 @@ const App = () => {
     
     if (k.length < 30) {
       const newData = await fetchCandles(sym);
-      if (newData.length >= 30) {
-        k = newData;
-        priceCache.current.set(sym, k);
-      }
+      if (newData.length >= 30) { k = newData; priceCache.current.set(sym, k); }
     } else {
       try {
         const cleanSym = sym.replace('_OTC', '');
@@ -235,11 +227,7 @@ const App = () => {
         const target = cleanSym.slice(3);
         const res = await fetch(`https://open.er-api.com/v6/latest/${base}`);
         const data = await res.json();
-        if (data?.rates?.[target]) {
-          k.push(data.rates[target]);
-          if (k.length > 100) k = k.slice(-100);
-          priceCache.current.set(sym, k);
-        }
+        if (data?.rates?.[target]) { k.push(data.rates[target]); if (k.length > 100) k = k.slice(-100); priceCache.current.set(sym, k); }
       } catch {}
     }
     
@@ -253,11 +241,24 @@ const App = () => {
     
     let ai = '';
     if (sig.action === 'SKIP') {
-      ai = `Нет уверенного сигнала. RSI=${rsi} (${rsi < 30 ? 'перепродан' : rsi > 70 ? 'перекуплен' : 'нейтрально'}), Stoch=${stoch.k}, ADX=${adx} (${adx > 25 ? 'тренд' : 'флэт'}). Жди более выгодного входа.`;
-    } else if (sig.probability >= 60) {
-      ai = `${sig.action} сигнал (${sig.probability}%). RSI=${rsi} (${rsi < 30 ? 'перепродан' : rsi > 70 ? 'перекуплен' : 'норма'}), Stoch=${stoch.k}, ADX=${adx} (${adx > 25 ? 'сильный тренд' : 'тренд'}). TP: ${tp.toFixed(5)}, SL: ${sl.toFixed(5)}. Рекомендую вход!`;
+      ai = `Нет сигнала. RSI=${rsi}, Stoch=${stoch.k}, ADX=${adx}.`;
     } else {
-      ai = `Слабый ${sig.action} сигнал (${sig.probability}%). RSI=${rsi}, Stoch=${stoch.k}, ADX=${adx}. Мало подтверждений. Можно пробовать с минимальной ставкой.`;
+      try {
+        const prompt = `Оцени уверенность ${sig.action} сигнала для ${sym}: RSI=${rsi}, Stoch=${stoch.k}, ADX=${adx}, MACD=${macd.histogram}, цена=${price}, EMA20=${calcEMA(k, 20).toFixed(5)}, EMA50=${calcEMA(k, 50).toFixed(5)}. Вероятность по индикаторам: ${sig.probability}%. Дай итоговую оценку в формате: "ИТОГ: XX%" и краткое объяснение.`;
+        const res = await fetch('https://api.deepseek.com/v1/chat/completions', {
+          method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${DEEPSEEK_API_KEY}` },
+          body: JSON.stringify({ model: 'deepseek-chat', messages: [{ role: 'user', content: prompt }], max_tokens: 80, temperature: 0.3 })
+        });
+        const d = await res.json();
+        const aiResponse = d.choices?.[0]?.message?.content || '';
+        const match = aiResponse.match(/(\d+)%/);
+        const aiProbability = match ? parseInt(match[1]) : sig.probability;
+        
+        ai = `🤖 DeepSeek: ${aiResponse}\n\nИндикаторы: RSI=${rsi}, Stoch=${stoch.k}, ADX=${adx}, MACD=${macd.histogram > 0 ? '↑' : '↓'}\nTP: ${tp.toFixed(5)}, SL: ${sl.toFixed(5)}`;
+        sig.probability = Math.round((sig.probability + aiProbability) / 2);
+      } catch {
+        ai = `${sig.action} сигнал (${sig.probability}%). RSI=${rsi}, Stoch=${stoch.k}, ADX=${adx}. TP: ${tp.toFixed(5)}, SL: ${sl.toFixed(5)}`;
+      }
     }
     
     return { action: sig.action, probability: sig.probability, rsi, stoch: stoch.k, adx, macd: macd.histogram, tp, sl, entry: price, aiText: ai, predictions, expiryTime };
@@ -266,12 +267,7 @@ const App = () => {
   const analyze = async () => { 
     setLoading(true); 
     const r = await analyzeSymbol(symbol); 
-    if (r) { 
-      setAnalysis(r); 
-      if (r.action !== 'SKIP' && notifyEnabled) { 
-        try { new Notification(`🤖 ${r.action} ${symbol}`, { body: `${r.probability}%` }); } catch {} 
-      } 
-    }
+    if (r) { setAnalysis(r); if (r.action !== 'SKIP' && notifyEnabled) { try { new Notification(`🤖 ${r.action} ${symbol}`, { body: `${r.probability}%` }); } catch {} } }
     setLoading(false); 
   };
 
@@ -282,7 +278,10 @@ const App = () => {
     const pairs = filteredPairs;
     for (let i = 0; i < pairs.length; i += 3) {
       const b = pairs.slice(i, i + 3); const res = await Promise.all(b.map(s => analyzeSymbol(s)));
-      res.forEach((r, idx) => { if (r && r.action !== 'SKIP') sigs.push({ symbol: b[idx], action: r.action, probability: r.probability, rsi: r.rsi, stoch: r.stoch, adx: r.adx, macd: r.macd, price: r.entry, tp: r.tp, sl: r.sl, aiReason: r.aiText, predictions: r.predictions, expiryTime: r.expiryTime }); });
+      res.forEach((r, idx) => { 
+        if (r && r.action !== 'SKIP' && r.probability >= 60) 
+          sigs.push({ symbol: b[idx], action: r.action, probability: r.probability, rsi: r.rsi, stoch: r.stoch, adx: r.adx, macd: r.macd, price: r.entry, tp: r.tp, sl: r.sl, aiReason: r.aiText, predictions: r.predictions, expiryTime: r.expiryTime }); 
+      });
       setAutoSignals([...sigs].sort((a, b) => b.probability - a.probability)); await new Promise(r => setTimeout(r, 300));
     }
     setLastAutoScan(new Date().toLocaleTimeString()); setAutoScanning(false);
@@ -291,16 +290,8 @@ const App = () => {
   }, [filteredPairs, notifyEnabled]);
 
   useEffect(() => { 
-    if (mode === 'auto') { 
-      autoScan(); 
-      scanIntervalRef.current = window.setInterval(autoScan, 120000); 
-    } 
-    return () => { 
-      if (scanIntervalRef.current) { 
-        clearInterval(scanIntervalRef.current); 
-        scanIntervalRef.current = null; 
-      } 
-    }; 
+    if (mode === 'auto') { autoScan(); scanIntervalRef.current = window.setInterval(autoScan, 120000); } 
+    return () => { if (scanIntervalRef.current) { clearInterval(scanIntervalRef.current); scanIntervalRef.current = null; } }; 
   }, [mode, autoScan]);
 
   const showToast = (m: string) => { setToast(m); setTimeout(() => setToast(''), 3000); };
@@ -311,8 +302,7 @@ const App = () => {
     if (!sessionId) { showToast('⚠️ Начни сессию!'); return; }
     setTrades(prev => [{ id: Date.now().toString(), symbol: sym, action, entryPrice: price, exitPrice: null, profit: null, time: new Date().toLocaleTimeString(), sessionId }, ...prev]);
     const cleanSym = sym.replace('_OTC', '');
-    const poSymbol = cleanSym.slice(0, 3) + '/' + cleanSym.slice(3);
-    window.open(`https://pocketoption.com/trading?pair=${poSymbol}`, '_blank');
+    window.open(`https://pocketoption.com/trading?pair=${cleanSym.slice(0, 3)}/${cleanSym.slice(3)}`, '_blank');
   };
   
   const closeTrade = (id: string) => { setTrades(prev => prev.map(t => t.id !== id ? t : { ...t, exitPrice: 0, profit: 0 })); };
@@ -336,28 +326,8 @@ const App = () => {
 
       <header className={`relative z-10 border-b border-purple-500/20 backdrop-blur p-4 ${darkMode ? 'bg-black/90' : 'bg-white/90'}`}>
         <div className="max-w-6xl mx-auto flex justify-between items-center flex-wrap gap-3">
-          <div className="flex items-center gap-3">
-            <h1 className="text-lg font-bold bg-gradient-to-r from-purple-400 to-cyan-400 bg-clip-text text-transparent">🤖 AI SIGNAL SCANNER</h1>
-            <div className="flex gap-1 bg-black/40 rounded-lg p-1">
-              <button onClick={() => setMode('manual')} className={`px-2 py-1 rounded text-xs font-bold ${mode === 'manual' ? 'bg-purple-600 text-white' : 'text-gray-400'}`}>🔍</button>
-              <button onClick={() => setMode('auto')} className={`px-2 py-1 rounded text-xs font-bold ${mode === 'auto' ? 'bg-purple-600 text-white' : 'text-gray-400'}`}>🤖</button>
-            </div>
-            <div className="flex gap-1 bg-black/40 rounded-lg p-1">
-              <button onClick={() => setMarketType('ALL')} className={`px-2 py-1 rounded text-xs ${marketType === 'ALL' ? 'bg-purple-600 text-white' : 'text-gray-400'}`}>Все</button>
-              <button onClick={() => setMarketType('STANDARD')} className={`px-2 py-1 rounded text-xs ${marketType === 'STANDARD' ? 'bg-purple-600 text-white' : 'text-gray-400'}`}>Стандарт</button>
-              <button onClick={() => setMarketType('OTC')} className={`px-2 py-1 rounded text-xs ${marketType === 'OTC' ? 'bg-purple-600 text-white' : 'text-gray-400'}`}>OTC</button>
-            </div>
-            <button onClick={() => setNotifyEnabled(!notifyEnabled)} className={`text-xs ${notifyEnabled ? 'text-green-400' : 'text-gray-500'}`}>{notifyEnabled ? '🔔' : '🔕'}</button>
-            <button onClick={() => setDarkMode(!darkMode)} className={`text-xs px-2 py-1 rounded ${darkMode ? 'bg-gray-700 text-yellow-400' : 'bg-gray-300 text-gray-700'}`}>{darkMode ? '☀️' : '🌙'}</button>
-          </div>
-          <div className="flex gap-3 text-sm items-center">
-            <div className="text-right"><div className="text-gray-500">WR</div><div className="font-bold text-green-400">{sessionWinRate}%</div></div>
-            <div className="text-right"><div className="text-gray-500">PO</div><div className={`font-bold ${poWinRate >= 50 ? 'text-green-400' : 'text-red-400'}`}>{poWinRate}%</div></div>
-            <div className="text-right"><div className="text-gray-500">Прибыль</div><div className={`font-bold ${sessionProfit >= 0 ? 'text-green-400' : 'text-red-400'}`}>{sessionProfit >= 0 ? '+' : ''}{sessionProfit}%</div></div>
-            <div className="text-right"><div className="text-gray-500">₽</div><div className={`font-bold ${profitRub >= 0 ? 'text-green-400' : 'text-red-400'}`}>{profitRub >= 0 ? '+' : ''}{profitRub} ₽</div></div>
-            <button onClick={resetSession} className="px-2 py-1 bg-gray-700 rounded text-xs">🔄</button>
-            <button onClick={exportCSV} className="px-2 py-1 bg-blue-600 rounded text-xs">📥</button>
-          </div>
+          <div className="flex items-center gap-3"><h1 className="text-lg font-bold bg-gradient-to-r from-purple-400 to-cyan-400 bg-clip-text text-transparent">🤖 AI SIGNAL SCANNER</h1><div className="flex gap-1 bg-black/40 rounded-lg p-1"><button onClick={() => setMode('manual')} className={`px-2 py-1 rounded text-xs font-bold ${mode === 'manual' ? 'bg-purple-600 text-white' : 'text-gray-400'}`}>🔍</button><button onClick={() => setMode('auto')} className={`px-2 py-1 rounded text-xs font-bold ${mode === 'auto' ? 'bg-purple-600 text-white' : 'text-gray-400'}`}>🤖</button></div><div className="flex gap-1 bg-black/40 rounded-lg p-1"><button onClick={() => setMarketType('ALL')} className={`px-2 py-1 rounded text-xs ${marketType === 'ALL' ? 'bg-purple-600 text-white' : 'text-gray-400'}`}>Все</button><button onClick={() => setMarketType('STANDARD')} className={`px-2 py-1 rounded text-xs ${marketType === 'STANDARD' ? 'bg-purple-600 text-white' : 'text-gray-400'}`}>Стандарт</button><button onClick={() => setMarketType('OTC')} className={`px-2 py-1 rounded text-xs ${marketType === 'OTC' ? 'bg-purple-600 text-white' : 'text-gray-400'}`}>OTC</button></div><button onClick={() => setNotifyEnabled(!notifyEnabled)} className={`text-xs ${notifyEnabled ? 'text-green-400' : 'text-gray-500'}`}>{notifyEnabled ? '🔔' : '🔕'}</button><button onClick={() => setDarkMode(!darkMode)} className={`text-xs px-2 py-1 rounded ${darkMode ? 'bg-gray-700 text-yellow-400' : 'bg-gray-300 text-gray-700'}`}>{darkMode ? '☀️' : '🌙'}</button></div>
+          <div className="flex gap-3 text-sm items-center"><div className="text-right"><div className="text-gray-500">WR</div><div className="font-bold text-green-400">{sessionWinRate}%</div></div><div className="text-right"><div className="text-gray-500">PO</div><div className={`font-bold ${poWinRate >= 50 ? 'text-green-400' : 'text-red-400'}`}>{poWinRate}%</div></div><div className="text-right"><div className="text-gray-500">Прибыль</div><div className={`font-bold ${sessionProfit >= 0 ? 'text-green-400' : 'text-red-400'}`}>{sessionProfit >= 0 ? '+' : ''}{sessionProfit}%</div></div><div className="text-right"><div className="text-gray-500">₽</div><div className={`font-bold ${profitRub >= 0 ? 'text-green-400' : 'text-red-400'}`}>{profitRub >= 0 ? '+' : ''}{profitRub} ₽</div></div><button onClick={resetSession} className="px-2 py-1 bg-gray-700 rounded text-xs">🔄</button><button onClick={exportCSV} className="px-2 py-1 bg-blue-600 rounded text-xs">📥</button></div>
         </div>
       </header>
 
@@ -366,30 +336,18 @@ const App = () => {
           {!sessionId ? <button onClick={startSession} className="px-6 py-2.5 bg-green-600 rounded-xl font-bold text-sm animate-pulse">▶ Сессия</button> : <button onClick={endSession} className="px-6 py-2.5 bg-red-600 rounded-xl font-bold text-sm">⏹</button>}
           <a href="https://pocketoption.com" target="_blank" className="px-4 py-2.5 bg-yellow-600 rounded-xl font-bold text-sm">🎯 PO</a>
           <div className="flex-1" />
-          <div className={`text-xs px-3 py-2 rounded-lg max-w-md ${darkMode ? 'bg-purple-500/10 border border-purple-500/20 text-purple-300' : 'bg-purple-100 border border-purple-200 text-purple-700'}`}>
-            {marketAdvice || '🤖 AI-советник'}
-          </div>
+          <div className={`text-xs px-3 py-2 rounded-lg max-w-md ${darkMode ? 'bg-purple-500/10 border border-purple-500/20 text-purple-300' : 'bg-purple-100 border border-purple-200 text-purple-700'}`}>{marketAdvice || '🤖 AI-советник'}</div>
         </div>
 
         {mode === 'manual' && (
           <div className={`rounded-xl p-6 border border-purple-500/20 mb-6 ${darkMode ? 'bg-black/40' : 'bg-white/80'}`}>
-            <div className="flex gap-3 mb-4">
-              <div className="relative flex-1">
-                <input value={searchSymbol} onChange={e => { setSearchSymbol(e.target.value); setShowDropdown(true); }} onFocus={() => setShowDropdown(true)} onBlur={() => setTimeout(() => setShowDropdown(false), 200)} placeholder="Введите актив (EURUSD, AAPL, GBPUSD_OTC...)" className={`w-full border border-purple-500/30 rounded-lg px-4 py-3 text-lg ${darkMode ? 'bg-black/60 text-white' : 'bg-white text-black'}`} />
-                {showDropdown && searchResults.length > 0 && (
-                  <div className={`absolute top-full left-0 right-0 border border-purple-500/30 rounded-lg mt-1 max-h-60 overflow-y-auto z-20 ${darkMode ? 'bg-black/90' : 'bg-white'}`}>
-                    {searchResults.map(p => (<div key={p} onClick={() => { setSymbol(p); setSearchSymbol(p); setShowDropdown(false); }} className={`px-4 py-2 cursor-pointer hover:bg-purple-500/20 text-sm ${symbol === p ? 'bg-purple-500/30' : ''}`}>{p}</div>))}
-                  </div>
-                )}
-              </div>
-              <button onClick={analyze} disabled={loading} className={`px-8 py-3 rounded-xl font-bold text-lg ${loading ? 'bg-gray-700 animate-pulse' : 'bg-gradient-to-r from-purple-600 to-cyan-600'}`}>{loading ? '⏳' : '🔍'}</button>
-            </div>
+            <div className="flex gap-3 mb-4"><div className="relative flex-1"><input value={searchSymbol} onChange={e => { setSearchSymbol(e.target.value); setShowDropdown(true); }} onFocus={() => setShowDropdown(true)} onBlur={() => setTimeout(() => setShowDropdown(false), 200)} placeholder="Введите актив" className={`w-full border border-purple-500/30 rounded-lg px-4 py-3 text-lg ${darkMode ? 'bg-black/60 text-white' : 'bg-white text-black'}`} />{showDropdown && searchResults.length > 0 && <div className={`absolute top-full left-0 right-0 border border-purple-500/30 rounded-lg mt-1 max-h-60 overflow-y-auto z-20 ${darkMode ? 'bg-black/90' : 'bg-white'}`}>{searchResults.map(p => <div key={p} onClick={() => { setSymbol(p); setSearchSymbol(p); setShowDropdown(false); }} className={`px-4 py-2 cursor-pointer hover:bg-purple-500/20 text-sm ${symbol === p ? 'bg-purple-500/30' : ''}`}>{p}</div>)}</div>}</div><button onClick={analyze} disabled={loading} className={`px-8 py-3 rounded-xl font-bold text-lg ${loading ? 'bg-gray-700 animate-pulse' : 'bg-gradient-to-r from-purple-600 to-cyan-600'}`}>{loading ? '⏳' : '🔍'}</button></div>
             {analysis && (
               <div className={`p-6 rounded-xl border-2 ${analysis.action === 'LONG' ? 'bg-green-500/10 border-green-500' : analysis.action === 'SHORT' ? 'bg-red-500/10 border-red-500' : 'bg-gray-500/10 border-gray-500'}`}>
                 <div className="flex justify-between items-center mb-4"><div><span className="text-3xl font-bold">{analysis.action === 'LONG' ? '📈 ВВЕРХ' : analysis.action === 'SHORT' ? '📉 ВНИЗ' : '⏸ СКИП'}</span><span className="ml-3 text-lg text-gray-400">{symbol}</span></div><div className="text-right"><div className={`text-3xl font-bold ${analysis.probability >= 75 ? 'text-green-400' : analysis.probability >= 60 ? 'text-yellow-400' : 'text-gray-400'}`}>{analysis.probability}%</div><div className={`text-xs font-bold mt-1 ${analysis.probability >= 75 ? 'text-green-400' : analysis.probability >= 60 ? 'text-yellow-400' : 'text-gray-400'}`}>{analysis.probability >= 75 ? '🔥 БЕРИ!' : analysis.probability >= 60 ? '👍 Можно' : '👀 Риск'}</div></div></div>
                 <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-3 mb-4 text-center"><div className="text-xs text-yellow-400">⏱ ЭКСПИРАЦИЯ (5 мин)</div><div className="text-2xl font-bold text-yellow-400">{analysis.expiryTime}</div></div>
                 <div className="grid grid-cols-3 gap-2 mb-4">{analysis.predictions.map(p => <div key={p.min} className={`bg-black/40 rounded-lg p-3 text-center border ${p.direction === 'up' ? 'border-green-500/30' : 'border-red-500/30'}`}><div className="text-xs text-gray-500">{p.min}м</div><div className={`text-lg font-bold ${p.direction === 'up' ? 'text-green-400' : 'text-red-400'}`}>{p.price.toFixed(5)}</div></div>)}</div>
-                <div className="bg-purple-500/10 border border-purple-500/20 rounded-lg p-4 mb-4"><div className="text-xs text-purple-400 mb-1">📊 АНАЛИЗ</div><div className="text-sm text-gray-300 whitespace-pre-line">{analysis.aiText}</div></div>
+                <div className="bg-purple-500/10 border border-purple-500/20 rounded-lg p-4 mb-4"><div className="text-xs text-purple-400 mb-1">🤖 DeepSeek AI анализ</div><div className="text-sm text-gray-300 whitespace-pre-line">{analysis.aiText}</div></div>
                 <div className="grid grid-cols-4 gap-2 text-xs mb-4"><div className="bg-black/30 rounded p-2 text-center"><div className="text-gray-500">RSI</div><div className={analysis.rsi < 30 ? 'text-green-400' : analysis.rsi > 70 ? 'text-red-400' : 'text-white'}>{analysis.rsi}</div></div><div className="bg-black/30 rounded p-2 text-center"><div className="text-gray-500">STOCH</div><div className={analysis.stoch < 20 ? 'text-green-400' : analysis.stoch > 80 ? 'text-red-400' : 'text-white'}>{analysis.stoch}</div></div><div className="bg-black/30 rounded p-2 text-center"><div className="text-gray-500">ADX</div><div className="text-white">{analysis.adx}</div></div><div className="bg-black/30 rounded p-2 text-center"><div className="text-gray-500">MACD</div><div className={analysis.macd > 0 ? 'text-green-400' : 'text-red-400'}>{analysis.macd.toFixed(5)}</div></div></div>
                 <div className="flex gap-3"><button onClick={() => openTrade('LONG', symbol, analysis.entry)} className={`flex-1 py-3 rounded-xl font-bold text-lg ${analysis.action === 'LONG' ? 'bg-green-600 animate-pulse' : 'bg-gray-700'}`}>🟢 ВВЕРХ</button><button onClick={() => openTrade('SHORT', symbol, analysis.entry)} className={`flex-1 py-3 rounded-xl font-bold text-lg ${analysis.action === 'SHORT' ? 'bg-red-600 animate-pulse' : 'bg-gray-700'}`}>🔴 ВНИЗ</button></div>
                 <div className="flex gap-2 mt-3"><button onClick={() => addPOTrade(analysis.action === 'LONG' ? 'UP' : 'DOWN', symbol, 'win')} className="flex-1 py-2 bg-green-600/50 rounded-lg text-xs font-bold">✅ Выиграл</button><button onClick={() => addPOTrade(analysis.action === 'LONG' ? 'UP' : 'DOWN', symbol, 'loss')} className="flex-1 py-2 bg-red-600/50 rounded-lg text-xs font-bold">❌ Проиграл</button></div>
@@ -400,13 +358,13 @@ const App = () => {
 
         {mode === 'auto' && (
           <div className={`rounded-xl p-6 border border-purple-500/20 mb-6 ${darkMode ? 'bg-black/40' : 'bg-white/80'}`}>
-            <div className="flex justify-between items-center mb-4"><div><h2 className="text-lg font-bold text-purple-300">🤖 АВТО-ПОИСК ({filteredPairs.length} активов)</h2><p className="text-xs text-gray-500">{lastAutoScan || 'Сканирую...'}</p></div><button onClick={autoScan} disabled={autoScanning} className={`px-4 py-2 rounded-lg text-sm font-bold ${autoScanning ? 'bg-gray-700' : 'bg-purple-600'}`}>{autoScanning ? '⏳' : '🔄'}</button></div>
+            <div className="flex justify-between items-center mb-4"><div><h2 className="text-lg font-bold text-purple-300">🤖 АВТО-ПОИСК ({filteredPairs.length} активов, от 60%)</h2><p className="text-xs text-gray-500">{lastAutoScan || 'Сканирую...'}</p></div><button onClick={autoScan} disabled={autoScanning} className={`px-4 py-2 rounded-lg text-sm font-bold ${autoScanning ? 'bg-gray-700' : 'bg-purple-600'}`}>{autoScanning ? '⏳' : '🔄'}</button></div>
             <div className="space-y-3">
               {autoSignals.map((s, i) => (
                 <div key={i} className={`rounded-xl border ${s.action === 'LONG' ? 'bg-green-500/5 border-green-500/30' : 'bg-red-500/5 border-red-500/30'}`}>
                   <div className="p-4"><div className="flex justify-between items-center mb-3"><div><span className="font-bold text-lg">{s.symbol}</span><span className={`ml-2 px-2 py-0.5 rounded text-xs font-bold ${s.action === 'LONG' ? 'bg-green-600' : 'bg-red-600'}`}>{s.action === 'LONG' ? '📈 ВВЕРХ' : '📉 ВНИЗ'}</span></div><div className="flex items-center gap-3"><div className={`text-lg font-bold ${s.probability >= 75 ? 'text-green-400' : 'text-yellow-400'}`}>{s.probability}%</div><span className="text-yellow-400 font-bold text-sm">⏱ {s.expiryTime}</span><button onClick={() => openTrade(s.action, s.symbol, s.price)} className={`px-4 py-2 rounded-lg text-sm font-bold ${s.action === 'LONG' ? 'bg-green-600' : 'bg-red-600'}`}>{s.action === 'LONG' ? 'ВВЕРХ' : 'ВНИЗ'}</button></div></div>
                     <div className="grid grid-cols-3 gap-2 mb-3 text-xs">{s.predictions.map(p => <div key={p.min} className={`bg-black/30 rounded p-2 text-center border ${p.direction === 'up' ? 'border-green-500/20' : 'border-red-500/20'}`}><div className="text-gray-500">{p.min}м</div><div className={`font-bold ${p.direction === 'up' ? 'text-green-400' : 'text-red-400'}`}>{p.price.toFixed(5)}</div></div>)}</div>
-                    <div className="bg-purple-500/10 border border-purple-500/20 rounded-lg p-3"><div className="text-xs text-gray-300">{s.aiReason?.slice(0, 150)}</div></div>
+                    <div className="bg-purple-500/10 border border-purple-500/20 rounded-lg p-3"><div className="text-xs text-gray-300">{s.aiReason?.slice(0, 200)}</div></div>
                   </div>
                 </div>
               ))}

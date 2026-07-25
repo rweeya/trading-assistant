@@ -1,10 +1,10 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 
 const FINNHUB_KEY = 'd9hrerpr01qjmfda64ggd9hrerpr01qjmfda64h0';
 const DEEPSEEK_API_KEY = 'sk-0ea0af4af3dd4a849db43f56eb186b46';
 
 const TOP_PAIRS = [
-  // Валютные пары
+  // Стандартные валюты
   'AUDNZD', 'AUDUSD', 'EURGBP', 'EURHUF', 'EURJPY', 'EURNZD', 'EURRUB', 'EURTRY',
   'GBPUSD', 'USDJPY', 'USDCAD', 'USDCHF', 'EURAUD', 'GBPJPY', 'EURUSD', 'EURCAD',
   'USDMXN', 'AUDJPY', 'AUDCAD', 'CADCHF', 'CHFJPY', 'NZDUSD', 'NZDJPY',
@@ -15,10 +15,19 @@ const TOP_PAIRS = [
   'USDVND', 'YERUSD', 'ZARUSD', 'CHFNOK', 'QARCNY', 'USDCLP', 'KESUSD',
   'BHDCNY', 'LBPUSD', 'NGNUSD', 'UAHUSD', 'USDDZD', 'USDEGP',
   // OTC Валюты
-  'AUDUSD_OTC', 'EURUSD_OTC', 'GBPUSD_OTC', 'USDJPY_OTC', 'USDCAD_OTC',
-  'USDCHF_OTC', 'EURAUD_OTC', 'GBPJPY_OTC', 'EURJPY_OTC', 'EURGBP_OTC',
-  'AUDJPY_OTC', 'AUDCAD_OTC', 'CADCHF_OTC', 'CHFJPY_OTC', 'NZDUSD_OTC',
-  'EURRUB_OTC', 'USDRUB_OTC', 'EURCHF_OTC', 'GBPCHF_OTC', 'GBPAUD_OTC',
+  'AEDCNY_OTC', 'AUDCAD_OTC', 'AUDCHF_OTC', 'AUDUSD_OTC',
+  'CADCHF_OTC', 'CADJPY_OTC', 'CHFJPY_OTC', 'CHFNOK_OTC',
+  'EURCHF_OTC', 'EURTRY_OTC', 'EURUSD_OTC',
+  'GBPAUD_OTC', 'GBPJPY_OTC', 'GBPUSD_OTC',
+  'JODCNY_OTC', 'NZDUSD_OTC',
+  'USDBDT_OTC', 'USDCAD_OTC', 'USDCNH_OTC', 'USDIDR_OTC',
+  'USDMXN_OTC', 'USDMYR_OTC', 'USDPHP_OTC', 'USDPKR_OTC',
+  'USDSGD_OTC', 'USDVND_OTC', 'YERUSD_OTC',
+  'USDJPY_OTC', 'AUDJPY_OTC', 'EURRUB_OTC',
+  'BHDCNY_OTC', 'NZDJPY_OTC', 'QARCNY_OTC', 'USDTHB_OTC',
+  'USDINR_OTC', 'ZARUSD_OTC', 'EURGBP_OTC', 'USDBRL_OTC',
+  'AUDNZD_OTC', 'UAHUSD_OTC', 'USDEGP_OTC', 'USDARS_OTC',
+  'KESUSD_OTC', 'USDCHF_OTC', 'LBPUSD_OTC', 'USDRUB_OTC',
   // Акции
   'AAPL', 'CSCO', 'INTC', 'MSFT', 'PFE', 'TSLA', 'XOM', 'AMZN', 'NFLX', 'V',
   'PLTR', 'COIN', 'GME', 'AMD', 'BA', 'AXP', 'VIX', 'FDX', 'C', 'META',
@@ -118,13 +127,7 @@ const getDeepSeekAnalysis = async (sym: string, rsi: number, stoch: number, adx:
     const support = l * 0.995, resistance = h * 1.005;
     const ema50 = calcEMA(klines, 50);
     const trend = price > ema50 ? 'бычий' : 'медвежий';
-    const rsiText = rsi < 30 ? 'перепродан' : rsi > 70 ? 'перекуплен' : 'нейтральный';
-    const stochText = stoch < 20 ? 'перепродан' : stoch > 80 ? 'перекуплен' : 'нейтральный';
-    const crossText = macd.crossed === 'up' ? 'линии MACD пересеклись вверх' : macd.crossed === 'down' ? 'линии MACD пересеклись вниз' : 'линии MACD без пересечения';
-
-    const prompt = `Ты трейдер. Развёрнутый анализ ${sym} на русском (4-6 предложений):
-Цена: ${price}, RSI: ${rsi} (${rsiText}), Stoch: ${stoch} (${stochText}), ADX: ${adx}, MACD: ${crossText}, Тренд: ${trend}, Поддержка: ${support.toFixed(5)}, Сопротивление: ${resistance.toFixed(5)}. Сигнал: ${action}. Объясни почему сигнал, какие риски, рекомендация.`;
-
+    const prompt = `${sym}: цена=${price}, RSI=${rsi}, Stoch=${stoch}, ADX=${adx}, MACD=${macd.crossed || 'нет'}, тренд=${trend}, поддержка=${support.toFixed(5)}, сопротивление=${resistance.toFixed(5)}. Сигнал: ${action}. Развёрнутый анализ на русском, 4-6 предложений.`;
     const res = await fetch('https://api.deepseek.com/v1/chat/completions', {
       method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${DEEPSEEK_API_KEY}` },
       body: JSON.stringify({ model: 'deepseek-chat', messages: [{ role: 'user', content: prompt }], max_tokens: 250, temperature: 0.4 })
@@ -137,8 +140,8 @@ const getDeepSeekAnalysis = async (sym: string, rsi: number, stoch: number, adx:
 const getMarketAdvisor = async (signals: { symbol: string; action: string; probability: number }[]): Promise<string> => {
   if (signals.length === 0) return '';
   try {
-    const summary = signals.map(s => `${s.symbol}: ${s.action} (${s.probability}%)`).join(', ');
-    const prompt = `На основе сигналов: ${summary}. Дай краткий совет трейдеру на русском: на что обратить внимание, какие активы лучше. 2-3 предложения.`;
+    const summary = signals.slice(0, 5).map(s => `${s.symbol}: ${s.action} (${s.probability}%)`).join(', ');
+    const prompt = `Сигналы: ${summary}. Дай краткий совет трейдеру на русском: какие активы лучше, настрой рынка. 2-3 предложения.`;
     const res = await fetch('https://api.deepseek.com/v1/chat/completions', {
       method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${DEEPSEEK_API_KEY}` },
       body: JSON.stringify({ model: 'deepseek-chat', messages: [{ role: 'user', content: prompt }], max_tokens: 100, temperature: 0.4 })
@@ -152,7 +155,6 @@ const getComboSignal = (klines: number[]): { action: 'LONG' | 'SHORT' | 'SKIP'; 
   const price = klines[klines.length - 1];
   const rsi = calcRSI(klines), stoch = calcStoch(klines), macd = calcMACD(klines), adx = calcADX(klines);
   const ema20 = calcEMA(klines, 20), ema50 = calcEMA(klines, 50);
-  const reasons: string[] = [];
   const longLevel1 = rsi < 40 && stoch.k < 30 && adx > 18;
   const shortLevel1 = rsi > 60 && stoch.k > 70 && adx > 18;
   if (!longLevel1 && !shortLevel1) return { action: 'SKIP', probability: 0, reasons: [] };
@@ -169,8 +171,8 @@ const getComboSignal = (klines: number[]): { action: 'LONG' | 'SHORT' | 'SKIP'; 
   if (macd.crossed === 'up') longBonus += 20; if (macd.crossed === 'down') shortBonus += 20;
   if (adx > 30) { longBonus += 10; shortBonus += 10; }
 
-  if (longLevel1 && longConfirms >= 2) return { action: 'LONG', probability: Math.min(95, 60 + longConfirms * 5 + Math.round(longBonus / 3)), reasons };
-  if (shortLevel1 && shortConfirms >= 2) return { action: 'SHORT', probability: Math.min(95, 60 + shortConfirms * 5 + Math.round(shortBonus / 3)), reasons };
+  if (longLevel1 && longConfirms >= 2) return { action: 'LONG', probability: Math.min(95, 60 + longConfirms * 5 + Math.round(longBonus / 3)), reasons: [] };
+  if (shortLevel1 && shortConfirms >= 2) return { action: 'SHORT', probability: Math.min(95, 60 + shortConfirms * 5 + Math.round(shortBonus / 3)), reasons: [] };
   return { action: 'SKIP', probability: 0, reasons: [] };
 };
 
@@ -196,8 +198,9 @@ const App = () => {
   const [darkMode, setDarkMode] = useState(() => localStorage.getItem('darkMode') !== 'light');
   const [marketAdvice, setMarketAdvice] = useState('');
   const [notifyEnabled, setNotifyEnabled] = useState(false);
-  const [marketType, setMarketType] = useState<'ALL' | 'OTC' | 'STANDARD'>('ALL');
+  const [marketType, setMarketType] = useState<'ALL' | 'OTC' | 'STANDARD'>('OTC');
   const [rubRate] = useState(RUB_RATE);
+  const scanIntervalRef = useRef<number | null>(null);
 
   const sessionTrades = trades.filter(t => t.sessionId === sessionId);
   const sessionWinRate = sessionTrades.filter(t => t.exitPrice).length > 0 ? Math.round((sessionTrades.filter(t => (t.profit || 0) > 0).length / sessionTrades.filter(t => t.exitPrice).length) * 100) : 0;
@@ -229,33 +232,56 @@ const App = () => {
 
   const analyze = async () => { setLoading(true); const r = await analyzeSymbol(symbol); if (r) { setAnalysis(r); if (r.action !== 'SKIP' && notifyEnabled) { try { new Notification(`🤖 ${r.action} ${symbol}`, { body: `${r.probability}%` }); } catch {} } } setLoading(false); };
 
-  const autoScan = async () => {
-    setAutoScanning(true); const sigs: Signal[] = [];
+  const autoScan = useCallback(async () => {
+    if (autoScanning) return;
+    setAutoScanning(true);
+    const sigs: Signal[] = [];
     const pairs = filteredPairs;
+    
     for (let i = 0; i < pairs.length; i += 3) {
-      const b = pairs.slice(i, i + 3); const res = await Promise.all(b.map(s => analyzeSymbol(s)));
-      res.forEach((r, idx) => { if (r && r.action !== 'SKIP') sigs.push({ symbol: b[idx], action: r.action, probability: r.probability, rsi: r.rsi, stoch: r.stoch, adx: r.adx, macd: r.macd, price: r.entry, tp: r.tp, sl: r.sl, aiReason: r.aiText, predictions: r.predictions, expiryTime: r.expiryTime }); });
-      setAutoSignals([...sigs].sort((a, b) => b.probability - a.probability)); await new Promise(r => setTimeout(r, 500));
+      const b = pairs.slice(i, i + 3);
+      const res = await Promise.all(b.map(s => analyzeSymbol(s)));
+      res.forEach((r, idx) => {
+        if (r && r.action !== 'SKIP') {
+          sigs.push({
+            symbol: b[idx], action: r.action, probability: r.probability,
+            rsi: r.rsi, stoch: r.stoch, adx: r.adx, macd: r.macd,
+            price: r.entry, tp: r.tp, sl: r.sl, aiReason: r.aiText,
+            predictions: r.predictions, expiryTime: r.expiryTime
+          });
+        }
+      });
+      setAutoSignals([...sigs].sort((a, b) => b.probability - a.probability));
+      await new Promise(r => setTimeout(r, 300));
     }
-    setLastAutoScan(new Date().toLocaleTimeString()); setAutoScanning(false);
+    
+    setLastAutoScan(new Date().toLocaleTimeString());
+    setAutoScanning(false);
+    
     if (sigs.length > 0) {
       showToast(`🎯 ${sigs.length} сигналов!`);
       if (notifyEnabled) { try { new Notification('🎯 Сканер', { body: `${sigs.length} сигналов` }); } catch {} }
     }
+    
     const advice = await getMarketAdvisor(sigs.slice(0, 5));
     setMarketAdvice(advice);
-  };
+  }, [filteredPairs, notifyEnabled]);
 
-  const showToast = (m: string) => { setToast(m); setTimeout(() => setToast(''), 3000); };
-
-  // Непрерывный поиск — перезапускается всегда
+  // Непрерывный поиск
   useEffect(() => {
     if (mode === 'auto') {
       autoScan();
-      const interval = setInterval(autoScan, 120000);
-      return () => clearInterval(interval);
+      scanIntervalRef.current = window.setInterval(autoScan, 120000);
     }
-  }, [mode, marketType]);
+    return () => {
+      if (scanIntervalRef.current) {
+        clearInterval(scanIntervalRef.current);
+        scanIntervalRef.current = null;
+      }
+    };
+  }, [mode, autoScan]);
+
+  const showToast = (m: string) => { setToast(m); setTimeout(() => setToast(''), 3000); };
 
   const startSession = () => { const id = Date.now().toString(); setSessionId(id); localStorage.setItem('sessionId', id); showToast('🚀 Сессия!'); };
   const endSession = () => { setSessionId(null); localStorage.removeItem('sessionId'); showToast('🏁 Завершено'); };

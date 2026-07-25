@@ -86,38 +86,28 @@ const calcADX = (p: number[], per = 14): number => {
 
 const fetchCandles = async (sym: string): Promise<number[]> => {
   const cleanSym = sym.replace('_OTC', '');
-  
   try {
     const base = cleanSym.slice(0, 3);
     const target = cleanSym.slice(3);
-    
     const res = await fetch(`https://open.er-api.com/v6/latest/${base}`);
     const data = await res.json();
-    
     if (data?.rates && data.rates[target]) {
       const currentRate = data.rates[target];
       const prices: number[] = [];
       let price = currentRate * (1 + (Math.random() - 0.5) * 0.01);
-      
       for (let i = 0; i < 100; i++) {
         const trend = (Math.random() - 0.48) * 0.0003;
         const noise = (Math.random() - 0.5) * 0.0002;
         price = price * (1 + trend + noise);
         prices.push(price);
       }
-      
       prices[prices.length - 1] = currentRate;
       return prices;
     }
   } catch (e) {}
-  
-  // Fallback
   const prices: number[] = [];
   let price = 1.0;
-  for (let i = 0; i < 100; i++) {
-    price += (Math.random() - 0.5) * 0.001;
-    prices.push(price);
-  }
+  for (let i = 0; i < 100; i++) { price += (Math.random() - 0.5) * 0.001; prices.push(price); }
   return prices;
 };
 
@@ -136,22 +126,6 @@ const predictPrice = (klines: number[], minutes: number): { price: number; direc
   else if (macd.crossed === 'down') change *= 1.5;
   const final = change * (minutes / 15) * 0.3;
   return { price: price * (1 + final / 100), direction: final > 0 ? 'up' : 'down' };
-};
-
-const getDeepSeekAnalysis = async (sym: string, rsi: number, stoch: number, adx: number, macd: any, action: string, price: number, klines: number[]): Promise<string> => {
-  try {
-    const h = Math.max(...klines.slice(-20)), l = Math.min(...klines.slice(-20));
-    const support = l * 0.995, resistance = h * 1.005;
-    const ema50 = calcEMA(klines, 50);
-    const trend = price > ema50 ? 'бычий' : 'медвежий';
-    const prompt = `${sym}: цена=${price}, RSI=${rsi}, Stoch=${stoch}, ADX=${adx}, MACD=${macd.crossed || 'нет'}, тренд=${trend}. Сигнал: ${action}. Развёрнутый анализ на русском, 4-6 предложений.`;
-    const res = await fetch('https://api.deepseek.com/v1/chat/completions', {
-      method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${DEEPSEEK_API_KEY}` },
-      body: JSON.stringify({ model: 'deepseek-chat', messages: [{ role: 'user', content: prompt }], max_tokens: 250, temperature: 0.4 })
-    });
-    const d = await res.json();
-    return d.choices?.[0]?.message?.content || `${action} сигнал.`;
-  } catch { return `${action} сигнал.`; }
 };
 
 const getMarketAdvisor = async (signals: { symbol: string; action: string; probability: number }[]): Promise<string> => {
@@ -220,6 +194,7 @@ const App = () => {
   const [rubRate] = useState(RUB_RATE);
   const scanIntervalRef = useRef<number | null>(null);
   const [showDropdown, setShowDropdown] = useState(false);
+  const priceCache = useRef<Map<string, number[]>>(new Map());
 
   const sessionTrades = trades.filter(t => t.sessionId === sessionId);
   const sessionWinRate = sessionTrades.filter(t => t.exitPrice).length > 0 ? Math.round((sessionTrades.filter(t => (t.profit || 0) > 0).length / sessionTrades.filter(t => t.exitPrice).length) * 100) : 0;
@@ -237,7 +212,29 @@ const App = () => {
   useEffect(() => { if (notifyEnabled && 'Notification' in window && Notification.permission === 'default') { Notification.requestPermission(); } }, [notifyEnabled]);
 
   const analyzeSymbol = async (sym: string): Promise<Analysis | null> => {
-    const k = await fetchCandles(sym);
+    let k = priceCache.current.get(sym) || [];
+    
+    if (k.length < 30) {
+      const newData = await fetchCandles(sym);
+      if (newData.length >= 30) {
+        k = newData;
+        priceCache.current.set(sym, k);
+      }
+    } else {
+      try {
+        const cleanSym = sym.replace('_OTC', '');
+        const base = cleanSym.slice(0, 3);
+        const target = cleanSym.slice(3);
+        const res = await fetch(`https://open.er-api.com/v6/latest/${base}`);
+        const data = await res.json();
+        if (data?.rates?.[target]) {
+          k.push(data.rates[target]);
+          if (k.length > 100) k = k.slice(-100);
+          priceCache.current.set(sym, k);
+        }
+      } catch {}
+    }
+    
     if (k.length < 30) return null;
     const price = k[k.length - 1], rsi = calcRSI(k), stoch = calcStoch(k), macd = calcMACD(k), adx = calcADX(k);
     const sig = getComboSignal(k);
@@ -245,8 +242,7 @@ const App = () => {
     const sl = sig.action === 'LONG' ? price * 0.997 : price * 1.003;
     const expiryTime = getExpiryTime();
     const predictions = [5, 10, 15].map(min => ({ min, ...predictPrice(k, min) }));
-    let ai = sig.action === 'SKIP' ? 'Нет сигнала.' : `${sig.action} (${sig.probability}%).`;
-    if (sig.action !== 'SKIP') ai = await getDeepSeekAnalysis(sym, rsi, stoch.k, adx, macd, sig.action, price, k);
+    const ai = sig.action === 'SKIP' ? 'Нет сигнала. Жди более выгодного входа.' : `${sig.action} сигнал (${sig.probability}%). RSI=${rsi} (${rsi < 30 ? 'перепродан' : rsi > 70 ? 'перекуплен' : 'норма'}), Stoch=${stoch.k}, ADX=${adx} (${adx > 25 ? 'тренд' : 'флэт'}). TP: ${tp.toFixed(5)}, SL: ${sl.toFixed(5)}`;
     return { action: sig.action, probability: sig.probability, rsi, stoch: stoch.k, adx, macd: macd.histogram, tp, sl, entry: price, aiText: ai, predictions, expiryTime };
   };
 
@@ -293,11 +289,16 @@ const App = () => {
   const showToast = (m: string) => { setToast(m); setTimeout(() => setToast(''), 3000); };
   const startSession = () => { const id = Date.now().toString(); setSessionId(id); localStorage.setItem('sessionId', id); showToast('🚀 Сессия!'); };
   const endSession = () => { setSessionId(null); localStorage.removeItem('sessionId'); showToast('🏁 Завершено'); };
+  
   const openTrade = (action: 'LONG' | 'SHORT', sym: string, price: number) => {
     if (!sessionId) { showToast('⚠️ Начни сессию!'); return; }
     setTrades(prev => [{ id: Date.now().toString(), symbol: sym, action, entryPrice: price, exitPrice: null, profit: null, time: new Date().toLocaleTimeString(), sessionId }, ...prev]);
-    window.open('https://pocketoption.com', '_blank');
+    // Открываем Pocket Option с прямым переходом на актив
+    const cleanSym = sym.replace('_OTC', '');
+    const poSymbol = cleanSym.slice(0, 3) + '/' + cleanSym.slice(3);
+    window.open(`https://pocketoption.com/trading?pair=${poSymbol}`, '_blank');
   };
+  
   const closeTrade = (id: string) => { setTrades(prev => prev.map(t => t.id !== id ? t : { ...t, exitPrice: 0, profit: 0 })); };
   const deleteTrade = (id: string) => { setTrades(prev => prev.filter(t => t.id !== id)); };
   const resetSession = () => { setTrades(prev => prev.filter(t => t.sessionId !== sessionId)); setSessionId(null); localStorage.removeItem('sessionId'); showToast('🔄 Сброс'); };
@@ -381,7 +382,7 @@ const App = () => {
                 <div className="flex justify-between items-center mb-4"><div><span className="text-3xl font-bold">{analysis.action === 'LONG' ? '📈 ВВЕРХ' : '📉 ВНИЗ'}</span><span className="ml-3 text-lg text-gray-400">{symbol}</span></div><div className="text-right"><div className={`text-3xl font-bold ${analysis.probability >= 75 ? 'text-green-400' : analysis.probability >= 65 ? 'text-yellow-400' : 'text-gray-400'}`}>{analysis.probability}%</div><div className={`text-xs font-bold mt-1 ${analysis.probability >= 75 ? 'text-green-400' : analysis.probability >= 65 ? 'text-yellow-400' : 'text-gray-400'}`}>{analysis.probability >= 75 ? '🔥 БЕРИ!' : analysis.probability >= 65 ? '👍 Можно' : '👀 Риск'}</div></div></div>
                 <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-3 mb-4 text-center"><div className="text-xs text-yellow-400">⏱ ЭКСПИРАЦИЯ (5 мин)</div><div className="text-2xl font-bold text-yellow-400">{analysis.expiryTime}</div></div>
                 <div className="grid grid-cols-3 gap-2 mb-4">{analysis.predictions.map(p => <div key={p.min} className={`bg-black/40 rounded-lg p-3 text-center border ${p.direction === 'up' ? 'border-green-500/30' : 'border-red-500/30'}`}><div className="text-xs text-gray-500">{p.min}м</div><div className={`text-lg font-bold ${p.direction === 'up' ? 'text-green-400' : 'text-red-400'}`}>{p.price.toFixed(5)}</div></div>)}</div>
-                <div className="bg-purple-500/10 border border-purple-500/20 rounded-lg p-4 mb-4"><div className="text-xs text-purple-400 mb-1">🤖 DeepSeek AI</div><div className="text-sm text-gray-300 whitespace-pre-line">{analysis.aiText}</div></div>
+                <div className="bg-purple-500/10 border border-purple-500/20 rounded-lg p-4 mb-4"><div className="text-xs text-purple-400 mb-1">📊 АНАЛИЗ</div><div className="text-sm text-gray-300 whitespace-pre-line">{analysis.aiText}</div></div>
                 <div className="grid grid-cols-4 gap-2 text-xs mb-4"><div className="bg-black/30 rounded p-2 text-center"><div className="text-gray-500">RSI</div><div className={analysis.rsi < 30 ? 'text-green-400' : analysis.rsi > 70 ? 'text-red-400' : 'text-white'}>{analysis.rsi}</div></div><div className="bg-black/30 rounded p-2 text-center"><div className="text-gray-500">STOCH</div><div className={analysis.stoch < 20 ? 'text-green-400' : analysis.stoch > 80 ? 'text-red-400' : 'text-white'}>{analysis.stoch}</div></div><div className="bg-black/30 rounded p-2 text-center"><div className="text-gray-500">ADX</div><div className="text-white">{analysis.adx}</div></div><div className="bg-black/30 rounded p-2 text-center"><div className="text-gray-500">MACD</div><div className={analysis.macd > 0 ? 'text-green-400' : 'text-red-400'}>{analysis.macd.toFixed(5)}</div></div></div>
                 <div className="flex gap-3"><button onClick={() => openTrade('LONG', symbol, analysis.entry)} className={`flex-1 py-3 rounded-xl font-bold text-lg ${analysis.action === 'LONG' ? 'bg-green-600 animate-pulse' : 'bg-gray-700'}`}>🟢 ВВЕРХ</button><button onClick={() => openTrade('SHORT', symbol, analysis.entry)} className={`flex-1 py-3 rounded-xl font-bold text-lg ${analysis.action === 'SHORT' ? 'bg-red-600 animate-pulse' : 'bg-gray-700'}`}>🔴 ВНИЗ</button></div>
                 <div className="flex gap-2 mt-3"><button onClick={() => addPOTrade(analysis.action === 'LONG' ? 'UP' : 'DOWN', symbol, 'win')} className="flex-1 py-2 bg-green-600/50 rounded-lg text-xs font-bold">✅ Выиграл</button><button onClick={() => addPOTrade(analysis.action === 'LONG' ? 'UP' : 'DOWN', symbol, 'loss')} className="flex-1 py-2 bg-red-600/50 rounded-lg text-xs font-bold">❌ Проиграл</button></div>

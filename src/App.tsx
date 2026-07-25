@@ -45,12 +45,14 @@ const calcRSI = (p: number[], per = 14): number => {
   if (l === 0) return 100;
   return Math.round(100 - 100 / (1 + (g / per) / (l / per)));
 };
+
 const calcEMA = (p: number[], per: number): number => {
   if (p.length < per) return p[p.length - 1] || 0;
   const k = 2 / (per + 1); let e = p[0];
   for (let i = 1; i < p.length; i++) e = (p[i] - e) * k + e;
   return e;
 };
+
 const calcMACD = (p: number[]): { macd: number; signal: number; histogram: number; crossed: 'up' | 'down' | null } => {
   if (p.length < 35) return { macd: 0, signal: 0, histogram: 0, crossed: null };
   const ema12 = calcEMA(p, 12), ema26 = calcEMA(p, 26);
@@ -67,12 +69,14 @@ const calcMACD = (p: number[]): { macd: number; signal: number; histogram: numbe
   else if (prevMacd >= prevSignal && macd < signal) crossed = 'down';
   return { macd, signal, histogram: parseFloat((macd - signal).toFixed(4)), crossed };
 };
+
 const calcStoch = (p: number[], per = 14): { k: number; d: number } => {
   if (p.length < per) return { k: 50, d: 50 };
   const s = p.slice(-per); const h = Math.max(...s), l = Math.min(...s);
   const k = h === l ? 50 : ((p[p.length - 1] - l) / (h - l)) * 100;
   return { k: Math.round(k), d: Math.round(k) };
 };
+
 const calcADX = (p: number[], per = 14): number => {
   if (p.length < per * 2) return 0;
   const tr: number[] = [], pDM: number[] = [], mDM: number[] = [];
@@ -170,38 +174,38 @@ const getComboSignal = (klines: number[]): { action: 'LONG' | 'SHORT' | 'SKIP'; 
   const ema20 = calcEMA(klines, 20), ema50 = calcEMA(klines, 50);
   const reasons: string[] = [];
   
-  const macdConverging = Math.abs(macd.macd - macd.signal) < Math.abs(macd.histogram) * 0.3;
+  // MACD пересечение - ОБЯЗАТЕЛЬНОЕ условие
+  if (!macd.crossed) {
+    return { action: 'SKIP', probability: 0, reasons: ['SKIP: Нет пересечения MACD'] };
+  }
+  
   const macdCrossUp = macd.crossed === 'up';
   const macdCrossDown = macd.crossed === 'down';
-  const histogramUp = macd.histogram > 0;
-  const histogramDown = macd.histogram < 0;
   
   let longScore = 0, shortScore = 0;
 
-  if (macdCrossUp) { longScore += 35; reasons.push('MACD пересечение ↑↑↑'); }
-  else if (macdCrossDown) { shortScore += 35; reasons.push('MACD пересечение ↓↓↓'); }
-  else if (macdConverging && histogramUp) { longScore += 25; reasons.push('MACD сближение ↑'); }
-  else if (macdConverging && histogramDown) { shortScore += 25; reasons.push('MACD сближение ↓'); }
-  else if (histogramUp) { longScore += 15; reasons.push('MACD↑'); }
-  else if (histogramDown) { shortScore += 15; reasons.push('MACD↓'); }
+  // Обязательное условие выполнено
+  if (macdCrossUp) { longScore += 35; reasons.push('✅ MACD пересечение ↑↑↑'); }
+  else if (macdCrossDown) { shortScore += 35; reasons.push('✅ MACD пересечение ↓↓↓'); }
 
-  if (rsi < 30) { longScore += 25; reasons.push(`RSI=${rsi}`); }
-  else if (rsi < 45) { longScore += 12; reasons.push(`RSI=${rsi}`); }
-  else if (rsi > 70) { shortScore += 25; reasons.push(`RSI=${rsi}`); }
-  else if (rsi > 55) { shortScore += 12; reasons.push(`RSI=${rsi}`); }
+  // Подтверждения (нужно 1 из 3)
+  let confirmations = 0;
+  
+  if (macdCrossUp && rsi < 50) { longScore += 20; confirmations++; reasons.push(`RSI=${rsi} < 50`); }
+  else if (macdCrossDown && rsi > 50) { shortScore += 20; confirmations++; reasons.push(`RSI=${rsi} > 50`); }
 
-  if (stoch.k < 20) { longScore += 20; reasons.push(`Stoch=${stoch.k}`); }
-  else if (stoch.k < 35) { longScore += 10; reasons.push(`Stoch=${stoch.k}`); }
-  else if (stoch.k > 80) { shortScore += 20; reasons.push(`Stoch=${stoch.k}`); }
-  else if (stoch.k > 65) { shortScore += 10; reasons.push(`Stoch=${stoch.k}`); }
+  if (macdCrossUp && stoch.k < 40) { longScore += 20; confirmations++; reasons.push(`Stoch=${stoch.k} < 40`); }
+  else if (macdCrossDown && stoch.k > 60) { shortScore += 20; confirmations++; reasons.push(`Stoch=${stoch.k} > 60`); }
 
-  if (adx > 30) { longScore += 10; shortScore += 10; reasons.push(`ADX=${adx}`); }
-  else if (adx > 20) { longScore += 5; shortScore += 5; reasons.push(`ADX=${adx}`); }
+  if (adx > 15) { longScore += 15; shortScore += 15; confirmations++; reasons.push(`ADX=${adx} > 15`); }
 
+  if (confirmations < 1) {
+    return { action: 'SKIP', probability: 0, reasons: [`SKIP: Подтверждений ${confirmations}/1`, ...reasons] };
+  }
+
+  // Бонусы
   if (price > ema20 && price > ema50) { longScore += 10; reasons.push('Тренд ↑'); }
   else if (price < ema20 && price < ema50) { shortScore += 10; reasons.push('Тренд ↓'); }
-  else if (price > ema20) { longScore += 5; }
-  else if (price < ema20) { shortScore += 5; }
 
   if (longScore >= 55) return { action: 'LONG', probability: Math.min(95, longScore), reasons };
   if (shortScore >= 55) return { action: 'SHORT', probability: Math.min(95, shortScore), reasons };
@@ -365,9 +369,247 @@ const App = () => {
   return (
     <div className={`min-h-screen ${darkMode ? 'bg-black text-white' : 'bg-gray-100 text-black'}`}>
       {toast && <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 bg-purple-600 px-6 py-3 rounded-xl font-bold animate-pulse text-sm shadow-lg">{toast}</div>}
-      <div className="fixed inset-0 pointer-events-none z-0">{Array.from({ length: 15 }).map((_, i) => <div key={i} className="absolute w-0.5 h-0.5 bg-purple-400 rounded-full animate-pulse" style={{ left: `${Math.random()*100}%`, top: `${Math.random()*100}%`, animationDuration: `${3+Math.random()*4}s`, opacity: 0.04+Math.random()*0.1 }} />)}</div>
+      
+      <div className="fixed inset-0 pointer-events-none z-0">
+        {Array.from({ length: 15 }).map((_, i) => (
+          <div key={i} className="absolute w-0.5 h-0.5 bg-purple-400 rounded-full animate-pulse" 
+            style={{ left: `${Math.random()*100}%`, top: `${Math.random()*100}%`, animationDuration: `${3+Math.random()*4}s`, opacity: 0.04+Math.random()*0.1 }} />
+        ))}
+      </div>
 
       <header className={`relative z-10 border-b border-purple-500/20 backdrop-blur p-4 ${darkMode ? 'bg-black/90' : 'bg-white/90'}`}>
         <div className="max-w-6xl mx-auto flex justify-between items-center flex-wrap gap-3">
-          <div className="flex items-center gap-3"><h1 className="text-lg font-bold bg-gradient-to-r from-purple-400 to-cyan-400 bg-clip-text text-transparent">🤖 AI SIGNAL SCANNER</h1><div className="flex gap-1 bg-black/40 rounded-lg p-1"><button onClick={() => setMode('manual')} className={`px-2 py-1 rounded text-xs font-bold ${mode === 'manual' ? 'bg-purple-600 text-white' : 'text-gray-400'}`}>🔍</button><button onClick={() => setMode('auto')} className={`px-2 py-1 rounded text-xs font-bold ${mode === 'auto' ? 'bg-purple-600 text-white' : 'text-gray-400'}`}>🤖</button></div><div className="flex gap-1 bg-black/40 rounded-lg p-1"><button onClick={() => setMarketType('ALL')} className={`px-2 py-1 rounded text-xs ${marketType === 'ALL' ? 'bg-purple-600 text-white' : 'text-gray-400'}`}>Все</button><button onClick={() => setMarketType('STANDARD')} className={`px-2 py-1 rounded text-xs ${marketType === 'STANDARD' ? 'bg-purple-600 text-white' : 'text-gray-400'}`}>Стандарт</button><button onClick={() => setMarketType('OTC')} className={`px-2 py-1 rounded text-xs ${marketType === 'OTC' ? 'bg-purple-600 text-white' : 'text-gray-400'}`}>OTC</button></div><button onClick={() => setNotifyEnabled(!notifyEnabled)} className={`text-xs ${notifyEnabled ? 'text-green-400' : 'text-gray-500'}`}>{notifyEnabled ? '🔔' : '🔕'}</button><button onClick={() => setDarkMode(!darkMode)} className={`text-xs px-2 py-1 rounded ${darkMode ? 'bg-gray-700 text-yellow-400' : 'bg-gray-300 text-gray-700'}`}>{darkMode ? '☀️' : '🌙'}</button></div>
-          <div className="flex gap-3 text-sm items-center"><div className="text-right"><div className="text-gray-500">WR</div><div className="font-bold text-green-400">{sessionWinRate}%</div></div><div className="text-right
+          <div className="flex items-center gap-3">
+            <h1 className="text-lg font-bold bg-gradient-to-r from-purple-400 to-cyan-400 bg-clip-text text-transparent">🤖 AI SIGNAL SCANNER</h1>
+            <div className="flex gap-1 bg-black/40 rounded-lg p-1">
+              <button onClick={() => setMode('manual')} className={`px-2 py-1 rounded text-xs font-bold ${mode === 'manual' ? 'bg-purple-600 text-white' : 'text-gray-400'}`}>🔍</button>
+              <button onClick={() => setMode('auto')} className={`px-2 py-1 rounded text-xs font-bold ${mode === 'auto' ? 'bg-purple-600 text-white' : 'text-gray-400'}`}>🤖</button>
+            </div>
+            <div className="flex gap-1 bg-black/40 rounded-lg p-1">
+              <button onClick={() => setMarketType('ALL')} className={`px-2 py-1 rounded text-xs ${marketType === 'ALL' ? 'bg-purple-600 text-white' : 'text-gray-400'}`}>Все</button>
+              <button onClick={() => setMarketType('STANDARD')} className={`px-2 py-1 rounded text-xs ${marketType === 'STANDARD' ? 'bg-purple-600 text-white' : 'text-gray-400'}`}>Стандарт</button>
+              <button onClick={() => setMarketType('OTC')} className={`px-2 py-1 rounded text-xs ${marketType === 'OTC' ? 'bg-purple-600 text-white' : 'text-gray-400'}`}>OTC</button>
+            </div>
+            <button onClick={() => setNotifyEnabled(!notifyEnabled)} className={`text-xs ${notifyEnabled ? 'text-green-400' : 'text-gray-500'}`}>{notifyEnabled ? '🔔' : '🔕'}</button>
+            <button onClick={() => setDarkMode(!darkMode)} className={`text-xs px-2 py-1 rounded ${darkMode ? 'bg-gray-700 text-yellow-400' : 'bg-gray-300 text-gray-700'}`}>{darkMode ? '☀️' : '🌙'}</button>
+          </div>
+          <div className="flex gap-3 text-sm items-center">
+            <div className="text-right"><div className="text-gray-500">WR</div><div className="font-bold text-green-400">{sessionWinRate}%</div></div>
+            <div className="text-right"><div className="text-gray-500">P/L</div><div className={`font-bold ${sessionProfit > 0 ? 'text-green-400' : 'text-red-400'}`}>${sessionProfit.toFixed(2)}</div></div>
+            <div className="text-right"><div className="text-gray-500">₽</div><div className="font-bold text-purple-400">{profitRub} ₽</div></div>
+            <div className="text-right"><div className="text-gray-500">PO</div><div className="font-bold text-cyan-400">{poWinRate}%</div></div>
+          </div>
+        </div>
+      </header>
+
+      <main className="relative z-10 max-w-6xl mx-auto p-4">
+        {/* Session controls */}
+        <div className="flex gap-2 mb-4 flex-wrap">
+          {!sessionId ? (
+            <button onClick={startSession} className="px-4 py-2 bg-green-600 rounded-lg font-bold text-sm">🚀 Старт сессии</button>
+          ) : (
+            <>
+              <button onClick={endSession} className="px-4 py-2 bg-red-600 rounded-lg font-bold text-sm">🏁 Завершить</button>
+              <button onClick={resetSession} className="px-4 py-2 bg-yellow-600 rounded-lg font-bold text-sm">🔄 Сброс</button>
+              <button onClick={exportCSV} className="px-4 py-2 bg-blue-600 rounded-lg font-bold text-sm">📥 CSV</button>
+            </>
+          )}
+        </div>
+
+        {/* Manual mode */}
+        {mode === 'manual' && (
+          <div className="mb-6">
+            <div className="flex gap-2 mb-3 relative">
+              <input
+                value={searchSymbol}
+                onChange={(e) => { setSearchSymbol(e.target.value); setShowDropdown(true); }}
+                onFocus={() => setShowDropdown(true)}
+                onBlur={() => setTimeout(() => setShowDropdown(false), 200)}
+                placeholder="Поиск актива..."
+                className={`flex-1 px-4 py-2 rounded-lg ${darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-300'} border`}
+              />
+              <button onClick={analyze} disabled={loading} className="px-6 py-2 bg-purple-600 rounded-lg font-bold disabled:opacity-50">
+                {loading ? '⏳' : '🔍'} Анализ
+              </button>
+              {showDropdown && searchResults.length > 0 && (
+                <div className={`absolute top-full mt-1 w-full max-h-48 overflow-y-auto rounded-lg shadow-xl z-20 ${darkMode ? 'bg-gray-800' : 'bg-white'}`}>
+                  {searchResults.map(p => (
+                    <div key={p} className={`px-4 py-2 cursor-pointer hover:bg-purple-600 text-sm ${symbol === p ? 'bg-purple-600' : ''}`}
+                      onClick={() => { setSymbol(p); setSearchSymbol(p); setShowDropdown(false); }}>
+                      {p}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {analysis && (
+              <div className={`p-4 rounded-xl border ${darkMode ? 'bg-gray-800/50 border-purple-500/30' : 'bg-white border-purple-200'}`}>
+                <div className="flex justify-between items-start mb-3">
+                  <div>
+                    <h3 className="text-xl font-bold">{symbol}</h3>
+                    <div className="text-sm text-gray-400">Цена: {formatPrice(analysis.entry)}</div>
+                  </div>
+                  <div className="text-right">
+                    <div className={`text-2xl font-bold ${analysis.action === 'LONG' ? 'text-green-400' : 'text-red-400'}`}>
+                      {analysis.action} {analysis.probability}%
+                    </div>
+                    <div className="text-xs text-gray-400">⏱ {analysis.expiryTime}</div>
+                  </div>
+                </div>
+                
+                <div className="grid grid-cols-4 gap-2 mb-3 text-center text-xs">
+                  <div className={`p-2 rounded ${darkMode ? 'bg-gray-700' : 'bg-gray-100'}`}>RSI<br/><span className="font-bold">{analysis.rsi}</span></div>
+                  <div className={`p-2 rounded ${darkMode ? 'bg-gray-700' : 'bg-gray-100'}`}>Stoch<br/><span className="font-bold">{analysis.stoch}</span></div>
+                  <div className={`p-2 rounded ${darkMode ? 'bg-gray-700' : 'bg-gray-100'}`}>ADX<br/><span className="font-bold">{analysis.adx}</span></div>
+                  <div className={`p-2 rounded ${darkMode ? 'bg-gray-700' : 'bg-gray-100'}`}>MACD<br/><span className="font-bold">{analysis.macd > 0 ? '↑' : '↓'}</span></div>
+                </div>
+
+                <div className="grid grid-cols-3 gap-2 mb-3 text-center text-xs">
+                  {analysis.predictions.map((p, i) => (
+                    <div key={i} className={`p-2 rounded ${darkMode ? 'bg-gray-700' : 'bg-gray-100'}`}>
+                      {p.min}мин<br/>
+                      <span className={`font-bold ${p.direction === 'up' ? 'text-green-400' : 'text-red-400'}`}>{formatPrice(p.price)}</span>
+                    </div>
+                  ))}
+                </div>
+
+                {analysis.action !== 'SKIP' && (
+                  <div className="flex gap-2 mb-3">
+                    <button onClick={() => openTrade(analysis.action as 'LONG' | 'SHORT', symbol, analysis.entry)}
+                      className={`flex-1 py-3 rounded-lg font-bold text-lg ${analysis.action === 'LONG' ? 'bg-green-600' : 'bg-red-600'}`}>
+                      {analysis.action === 'LONG' ? '📈 ВВЕРХ' : '📉 ВНИЗ'}
+                    </button>
+                  </div>
+                )}
+                
+                <div className={`p-3 rounded-lg text-xs whitespace-pre-line ${darkMode ? 'bg-gray-700/50' : 'bg-gray-50'}`}>
+                  {analysis.aiText}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Auto mode */}
+        {mode === 'auto' && (
+          <div>
+            <div className="flex justify-between items-center mb-4">
+              <div className="text-sm text-gray-400">
+                {autoScanning ? '⏳ Сканирование...' : `Последнее: ${lastAutoScan || '-'}`}
+                {' | '}{filteredPairs.length} активов
+              </div>
+              <button onClick={autoScan} disabled={autoScanning} className="px-4 py-2 bg-purple-600 rounded-lg text-sm font-bold disabled:opacity-50">
+                🔄 Сканировать
+              </button>
+            </div>
+
+            {marketAdvice && (
+              <div className={`p-3 mb-4 rounded-lg text-sm border border-purple-500/30 ${darkMode ? 'bg-purple-900/20' : 'bg-purple-50'}`}>
+                🤖 {marketAdvice}
+              </div>
+            )}
+
+            <div className="grid gap-3">
+              {autoSignals.map((sig, i) => (
+                <div key={i} className={`p-4 rounded-xl border ${darkMode ? 'bg-gray-800/50 border-purple-500/30' : 'bg-white border-purple-200'}`}>
+                  <div className="flex justify-between items-start mb-3">
+                    <div>
+                      <h3 className="text-lg font-bold">{sig.symbol}</h3>
+                      <div className="text-sm text-gray-400">{formatPrice(sig.price)} | ⏱ {sig.expiryTime}</div>
+                    </div>
+                    <div className="text-right">
+                      <div className={`text-xl font-bold ${sig.action === 'LONG' ? 'text-green-400' : 'text-red-400'}`}>
+                        {sig.action} {sig.probability}%
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <div className="grid grid-cols-4 gap-2 mb-3 text-center text-xs">
+                    <div className={`p-2 rounded ${darkMode ? 'bg-gray-700' : 'bg-gray-100'}`}>RSI<br/><span className="font-bold">{sig.rsi}</span></div>
+                    <div className={`p-2 rounded ${darkMode ? 'bg-gray-700' : 'bg-gray-100'}`}>Stoch<br/><span className="font-bold">{sig.stoch}</span></div>
+                    <div className={`p-2 rounded ${darkMode ? 'bg-gray-700' : 'bg-gray-100'}`}>ADX<br/><span className="font-bold">{sig.adx}</span></div>
+                    <div className={`p-2 rounded ${darkMode ? 'bg-gray-700' : 'bg-gray-100'}`}>MACD<br/><span className="font-bold">{sig.macd > 0 ? '↑' : '↓'}</span></div>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-2 mb-3 text-center text-xs">
+                    {sig.predictions.map((p, j) => (
+                      <div key={j} className={`p-2 rounded ${darkMode ? 'bg-gray-700' : 'bg-gray-100'}`}>
+                        {p.min}мин<br/>
+                        <span className={`font-bold ${p.direction === 'up' ? 'text-green-400' : 'text-red-400'}`}>{formatPrice(p.price)}</span>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="flex gap-2 mb-3">
+                    <button onClick={() => openTrade(sig.action, sig.symbol, sig.price)}
+                      className={`flex-1 py-2 rounded-lg font-bold ${sig.action === 'LONG' ? 'bg-green-600' : 'bg-red-600'}`}>
+                      {sig.action === 'LONG' ? '📈 ВВЕРХ' : '📉 ВНИЗ'}
+                    </button>
+                  </div>
+
+                  <div className={`p-2 rounded-lg text-xs whitespace-pre-line ${darkMode ? 'bg-gray-700/50' : 'bg-gray-50'}`}>
+                    {sig.aiReason.slice(0, 300)}
+                  </div>
+                </div>
+              ))}
+              {autoSignals.length === 0 && !autoScanning && (
+                <div className="text-center text-gray-500 py-8">Нет сигналов. Нажмите "Сканировать"</div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* PO Trade buttons */}
+        {sessionId && (
+          <div className={`mt-6 p-4 rounded-xl border ${darkMode ? 'bg-gray-800/50 border-purple-500/30' : 'bg-white border-purple-200'}`}>
+            <h3 className="font-bold mb-3">🎯 Pocket Option WinRate</h3>
+            <div className="flex gap-2 flex-wrap">
+              <button onClick={() => addPOTrade('UP', symbol, 'win')} className="px-4 py-2 bg-green-600 rounded-lg font-bold text-sm">🟢 ВВЕРХ Win</button>
+              <button onClick={() => addPOTrade('UP', symbol, 'loss')} className="px-4 py-2 bg-red-600 rounded-lg font-bold text-sm">🔴 ВВЕРХ Loss</button>
+              <button onClick={() => addPOTrade('DOWN', symbol, 'win')} className="px-4 py-2 bg-green-600 rounded-lg font-bold text-sm">🟢 ВНИЗ Win</button>
+              <button onClick={() => addPOTrade('DOWN', symbol, 'loss')} className="px-4 py-2 bg-red-600 rounded-lg font-bold text-sm">🔴 ВНИЗ Loss</button>
+            </div>
+            {poTrades.length > 0 && (
+              <div className="mt-3 text-xs text-gray-400 max-h-32 overflow-y-auto">
+                {poTrades.slice(0, 20).map((t, i) => (
+                  <div key={i} className="flex justify-between py-1 border-b border-gray-700/30">
+                    <span>{t.time}</span>
+                    <span>{t.symbol} {t.action}</span>
+                    <span className={t.result === 'win' ? 'text-green-400' : 'text-red-400'}>{t.result}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Trades history */}
+        {sessionId && sessionTrades.length > 0 && (
+          <div className={`mt-4 p-4 rounded-xl border ${darkMode ? 'bg-gray-800/50 border-purple-500/30' : 'bg-white border-purple-200'}`}>
+            <h3 className="font-bold mb-3">📊 История сделок</h3>
+            <div className="space-y-2 max-h-64 overflow-y-auto">
+              {sessionTrades.map(t => (
+                <div key={t.id} className={`flex justify-between items-center p-2 rounded text-sm ${darkMode ? 'bg-gray-700' : 'bg-gray-100'}`}>
+                  <div>
+                    <span className="font-bold">{t.symbol}</span>
+                    <span className={`ml-2 ${t.action === 'LONG' ? 'text-green-400' : 'text-red-400'}`}>{t.action}</span>
+                  </div>
+                  <div className="text-xs text-gray-400">{formatPrice(t.entryPrice)}</div>
+                  <div className="text-xs text-gray-400">{t.time}</div>
+                  {!t.exitPrice ? (
+                    <button onClick={() => closeTrade(t.id)} className="px-2 py-1 bg-yellow-600 rounded text-xs">Закрыть</button>
+                  ) : (
+                    <button onClick={() => deleteTrade(t.id)} className="px-2 py-1 bg-red-600 rounded text-xs">🗑</button>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </main>
+    </div>
+  );
+};
+
+export default App;

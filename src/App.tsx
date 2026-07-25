@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 
 const DEEPSEEK_API_KEY = 'sk-0ea0af4af3dd4a849db43f56eb186b46';
+const TELEGRAM_BOT_TOKEN = '8749784509:AAFbeeAE958opby8MZDo4GVQZh-9_lntOZM';
+const TELEGRAM_CHAT_ID = '1286442165';
 
 const TOP_PAIRS = [
   'AUDNZD', 'AUDUSD', 'EURGBP', 'EURHUF', 'EURJPY', 'EURNZD', 'EURRUB', 'EURTRY',
@@ -128,6 +130,16 @@ const predictPrice = (klines: number[], minutes: number): { price: number; direc
   return { price: price * (1 + final / 100), direction: final > 0 ? 'up' : 'down' };
 };
 
+const sendTelegram = async (text: string) => {
+  try {
+    await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: TELEGRAM_CHAT_ID, text: text, parse_mode: 'HTML' })
+    });
+  } catch {}
+};
+
 const getMarketAdvisor = async (signals: { symbol: string; action: string; probability: number }[]): Promise<string> => {
   if (signals.length === 0) return '';
   try {
@@ -244,7 +256,7 @@ const App = () => {
       ai = `Нет сигнала. RSI=${rsi}, Stoch=${stoch.k}, ADX=${adx}.`;
     } else {
       try {
-        const prompt = `Оцени уверенность ${sig.action} сигнала для ${sym}: RSI=${rsi}, Stoch=${stoch.k}, ADX=${adx}, MACD=${macd.histogram}, цена=${price}, EMA20=${calcEMA(k, 20).toFixed(5)}, EMA50=${calcEMA(k, 50).toFixed(5)}. Вероятность по индикаторам: ${sig.probability}%. Дай итоговую оценку в формате: "ИТОГ: XX%" и краткое объяснение.`;
+        const prompt = `Оцени уверенность ${sig.action} сигнала для ${sym}: RSI=${rsi}, Stoch=${stoch.k}, ADX=${adx}, MACD=${macd.histogram}, цена=${price}. Вероятность по индикаторам: ${sig.probability}%. Дай итоговую оценку в формате: "ИТОГ: XX%" и краткое объяснение.`;
         const res = await fetch('https://api.deepseek.com/v1/chat/completions', {
           method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${DEEPSEEK_API_KEY}` },
           body: JSON.stringify({ model: 'deepseek-chat', messages: [{ role: 'user', content: prompt }], max_tokens: 80, temperature: 0.3 })
@@ -261,13 +273,19 @@ const App = () => {
       }
     }
     
+    // Telegram уведомление от 60%
+    if (sig.action !== 'SKIP' && sig.probability >= 60) {
+      const emoji = sig.action === 'LONG' ? '📈' : '📉';
+      sendTelegram(`${emoji} <b>${sig.action} ${sym}</b>\nВероятность: <b>${sig.probability}%</b>\nВход: ${price.toFixed(5)}\nTP: ${tp.toFixed(5)}\nSL: ${sl.toFixed(5)}\n⏱ Экспирация: ${expiryTime}\n\n${ai.slice(0, 200)}`);
+    }
+    
     return { action: sig.action, probability: sig.probability, rsi, stoch: stoch.k, adx, macd: macd.histogram, tp, sl, entry: price, aiText: ai, predictions, expiryTime };
   };
 
   const analyze = async () => { 
     setLoading(true); 
     const r = await analyzeSymbol(symbol); 
-    if (r) { setAnalysis(r); if (r.action !== 'SKIP' && notifyEnabled) { try { new Notification(`🤖 ${r.action} ${symbol}`, { body: `${r.probability}%` }); } catch {} } }
+    if (r) { setAnalysis(r); }
     setLoading(false); 
   };
 
@@ -285,9 +303,9 @@ const App = () => {
       setAutoSignals([...sigs].sort((a, b) => b.probability - a.probability)); await new Promise(r => setTimeout(r, 300));
     }
     setLastAutoScan(new Date().toLocaleTimeString()); setAutoScanning(false);
-    if (sigs.length > 0) { showToast(`🎯 ${sigs.length} сигналов!`); if (notifyEnabled) { try { new Notification('🎯 Сканер', { body: `${sigs.length} сигналов` }); } catch {} } }
+    if (sigs.length > 0) { showToast(`🎯 ${sigs.length} сигналов!`); }
     const advice = await getMarketAdvisor(sigs.slice(0, 5)); setMarketAdvice(advice);
-  }, [filteredPairs, notifyEnabled]);
+  }, [filteredPairs]);
 
   useEffect(() => { 
     if (mode === 'auto') { autoScan(); scanIntervalRef.current = window.setInterval(autoScan, 120000); } 

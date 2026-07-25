@@ -1,13 +1,19 @@
-export default async function handler(req, res) {
-  const { url } = req.query;
-  if (!url) return res.status(400).json({ error: 'url required' });
-  
+// api/proxy.js
+export const config = {
+  runtime: 'edge',
+};
+
+export default async function handler(req) {
+  const url = new URL(req.url).searchParams.get('url');
+  if (!url) return new Response(JSON.stringify({ error: 'url required' }), { status: 400 });
+
   try {
     const response = await fetch(decodeURIComponent(url));
     const data = await response.json();
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.status(200).json(data);
+    return new Response(JSON.stringify(data), {
+      headers: { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' },
+    });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    return new Response(JSON.stringify({ error: e.message }), { status: 500 });
   }
 }
